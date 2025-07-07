@@ -1,0 +1,42 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2021"
+
+# Integration test project does not need to generate cdylib
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Use package name as dependency name, and use the hyphen-to-underscore rule when importing
+[dependencies]
+soroban-sdk = "22.0.0"
+stellar-strkey = "0.0.7"
+ed25519-dalek = { version = "2.1.0", features = ["rand_core"] }
+rand = "0.8.5"
+
+# Use package name as dependency name, and use the hyphen-to-underscore rule when importing
+fungible_token = { path = "../fungible-token", package = "fungible-token" }
+minter_manager = { path = "../minter-manager", package = "minter-manager" }
+solvbtc_oracle = { path = "../oracle", package = "solvbtc-oracle" }
+solvbtc_vault = { path = "../vault", package = "solvbtc-vault" }
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+heapless = "0.8"
+
+[features]
+testutils = ["soroban-sdk/testutils"]
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.release-with-logs]
+inherits = "release"
+debug-assertions = true 
