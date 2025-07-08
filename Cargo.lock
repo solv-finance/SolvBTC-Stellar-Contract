@@ -723,21 +723,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e04e2fd2b8188ea827b32ef11de88377086d690286ab35747ef7f9bf3ccb590"
 
 [[package]]
-name = "integration-tests"
-version = "0.1.0"
-dependencies = [
- "ed25519-dalek",
- "fungible-token",
- "heapless",
- "minter-manager",
- "rand",
- "solvbtc-oracle",
- "solvbtc-vault",
- "soroban-sdk",
- "stellar-strkey 0.0.7",
-]
-
-[[package]]
 name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1532,6 +1517,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tests"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "fungible-token",
+ "heapless",
+ "minter-manager",
+ "rand",
+ "solvbtc-oracle",
+ "solvbtc-vault",
+ "soroban-sdk",
+ "stellar-strkey 0.0.7",
 ]
 
 [[package]]

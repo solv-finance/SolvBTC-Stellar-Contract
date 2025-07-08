@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "fungible-token",
-    "integration-tests",
+    "tests",
     "minter-manager",
     "oracle",
     "vault"

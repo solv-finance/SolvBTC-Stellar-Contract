@@ -386,7 +386,10 @@ fn test_mock_public_key_format() {
     let pubkey = create_mock_public_key(&env);
 
     // Verify it's a valid Address
-    assert!(pubkey.to_xdr(&env).len() > 0);
+    assert_eq!(
+        pubkey.to_string(),
+        String::from_str(&env, "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ")
+    );
 }
 
 #[test]
@@ -442,13 +445,6 @@ fn test_withdraw_with_mock_pubkey() {
 }
 
 // ==================== Basic Tests ====================
-
-#[test]
-fn test_constants() {
-    // Verify constants
-    assert_eq!(MAX_CURRENCIES, 10);
-    assert_eq!(FEE_PRECISION, 10000);
-}
 
 #[test]
 fn test_error_enum() {

@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 extern crate std;
-use crate::{FungibleToken, FungibleTokenClient};
+use crate::fungible_token::{FungibleToken, FungibleTokenClient};
 use soroban_sdk::vec;
 use soroban_sdk::{
     log, symbol_short,

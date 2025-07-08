@@ -8,25 +8,25 @@ use stellar_strkey::ed25519::PrivateKey;
 // Import WASM contracts
 mod fungible_token_wasm {
     soroban_sdk::contractimport!(
-        file = "../fungible-token/target/wasm32-unknown-unknown/release/fungible_token.wasm"
+        file = "../target/wasm32-unknown-unknown/optimized/fungible_token.wasm"
     );
 }
 
 mod minter_manager_wasm {
     soroban_sdk::contractimport!(
-        file = "../minter-manager/target/wasm32-unknown-unknown/release/minter_manager.wasm"
+        file = "../target/wasm32-unknown-unknown/optimized/minter_manager.wasm"
     );
 }
 
 mod oracle_wasm {
     soroban_sdk::contractimport!(
-        file = "../oracle/target/wasm32-unknown-unknown/release/solvbtc_oracle.wasm"
+        file = "../target/wasm32-unknown-unknown/optimized/solvbtc_oracle.wasm"
     );
 }
 
 mod vault_wasm {
     soroban_sdk::contractimport!(
-        file = "../vault/target/wasm32-unknown-unknown/release/solvbtc_vault.wasm"
+        file = "../target/wasm32-unknown-unknown/optimized/solvbtc_vault.wasm"
     );
 }
 

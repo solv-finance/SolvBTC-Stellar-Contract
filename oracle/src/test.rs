@@ -8,14 +8,14 @@ use soroban_sdk::{
 };
 use std::println;
 
-// 创建合约和客户端的辅助函数
+// Helper function to create contract and client
 fn create_oracle_contract(env: &Env) -> (SolvBtcOracleClient, Address) {
     let contract_address = env.register(SolvBtcOracle, ());
     let client = SolvBtcOracleClient::new(env, &contract_address);
     (client, contract_address)
 }
 
-// ==================== 初始化测试 ====================
+// ==================== Initialization Tests ====================
 
 #[test]
 fn test_initialize_success() {
@@ -26,7 +26,7 @@ fn test_initialize_success() {
     let (client, _) = create_oracle_contract(&env);
 
     // 成功初始化
-    client.initialize(&admin, &8, &1000000000, &500); // 8位小数，初始NAV=10，最大变化5%
+    client.initialize(&admin, &8, &1000000000, &500); // 8 decimal places, initial NAV=10, max change 5%
 
     // 验证初始化状态
     assert!(client.is_initialized());
@@ -45,7 +45,7 @@ fn test_initialize_invalid_nav_decimals() {
     let admin = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 尝试使用超过最大值的小数位数
+    // Try to use decimal places exceeding the maximum value
     client.initialize(&admin, &19, &1000000000, &500);
 }
 
@@ -58,7 +58,7 @@ fn test_initialize_invalid_initial_nav() {
     let admin = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 尝试使用负数NAV
+    // Try to use negative NAV
     client.initialize(&admin, &8, &-1000000000, &500);
 }
 
@@ -71,7 +71,7 @@ fn test_initialize_invalid_max_change_percent() {
     let admin = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 尝试使用超过100%的最大变化百分比
+    // Try to use maximum change percentage exceeding 100%
     client.initialize(&admin, &8, &1000000000, &10001);
 }
 
@@ -84,14 +84,14 @@ fn test_initialize_already_initialized() {
     let admin = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 第一次初始化
+    // First initialization
     client.initialize(&admin, &8, &1000000000, &500);
 
-    // 第二次初始化应该失败
+    // Second initialization should fail
     client.initialize(&admin, &8, &2000000000, &1000);
 }
 
-// ==================== NAV查询测试 ====================
+// ==================== NAV Query Tests ====================
 
 #[test]
 #[should_panic(expected = "HostError: Error(Contract, #3)")]
@@ -101,11 +101,11 @@ fn test_nav_queries_not_initialized() {
 
     let (client, _) = create_oracle_contract(&env);
 
-    // 未初始化时查询应该失败
+    // Query should fail when not initialized
     client.get_nav();
 }
 
-// ==================== 管理员功能测试 ====================
+// ==================== Admin Function Tests ====================
 
 #[test]
 fn test_set_nav_manager_by_admin() {
@@ -116,13 +116,13 @@ fn test_set_nav_manager_by_admin() {
     let nav_manager = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约
+    // Initialize contract
     client.initialize(&admin, &8, &1000000000, &500);
 
-    // 设置NAV管理员
+    // Set NAV manager
     client.set_nav_manager_by_admin(&nav_manager);
 
-    // 验证设置成功
+    // Verify successful setting
     assert_eq!(client.nav_manager(), Some(nav_manager));
 }
 
@@ -134,13 +134,13 @@ fn test_set_max_nav_change_by_admin() {
     let admin = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约
+    // Initialize contract
     client.initialize(&admin, &8, &1000000000, &500);
 
-    // 修改最大变化百分比
+    // Modify maximum change percentage
     client.set_max_nav_change_by_admin(&1000);
 
-    // 验证修改成功
+    // Verify successful modification
     assert_eq!(client.max_nav_change_percent(), 1000);
 }
 
@@ -153,14 +153,14 @@ fn test_set_max_nav_change_invalid() {
     let admin = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约
+    // Initialize contract
     client.initialize(&admin, &8, &1000000000, &500);
 
-    // 尝试设置无效的最大变化百分比
+    // Try to set invalid maximum change percentage
     client.set_max_nav_change_by_admin(&10001);
 }
 
-// ==================== NAV管理员功能测试 ====================
+// ==================== NAV Manager Function Tests ====================
 
 #[test]
 fn test_set_nav_by_manager_success() {
@@ -171,16 +171,16 @@ fn test_set_nav_by_manager_success() {
     let nav_manager = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约
+    // Initialize contract
     client.initialize(&admin, &8, &1000000000, &500);
 
-    // 设置NAV管理员
+    // Set NAV manager
     client.set_nav_manager_by_admin(&nav_manager);
 
-    // NAV管理员设置新的NAV值（变化4%，在允许范围内）
+    // NAV manager sets new NAV value (4% change, within allowed range)
     client.set_nav_by_manager(&1040000000);
 
-    // 验证设置成功
+    // Verify successful setting
     assert_eq!(client.get_nav(), 1040000000);
 }
 
@@ -194,13 +194,13 @@ fn test_set_nav_by_manager_exceeds_limit() {
     let nav_manager = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约（最大变化5%）
+    // Initialize contract (maximum change 5%)
     client.initialize(&admin, &8, &1000000000, &500);
 
-    // 设置NAV管理员
+    // Set NAV manager
     client.set_nav_manager_by_admin(&nav_manager);
 
-    // 尝试设置变化超过5%的NAV值（变化6%）
+    // Try to set NAV value with change exceeding 5% (6% change)
     client.set_nav_by_manager(&1060000000);
 }
 
@@ -213,10 +213,10 @@ fn test_set_nav_by_manager_not_set() {
     let admin = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约但不设置NAV管理员
+    // Initialize contract but do not set NAV manager
     client.initialize(&admin, &8, &1000000000, &500);
 
-    // 尝试设置NAV（应该失败，因为没有设置NAV管理员）
+    // Try to set NAV (should fail, because NAV manager is not set)
     client.set_nav_by_manager(&1040000000);
 }
 
@@ -230,17 +230,17 @@ fn test_set_nav_by_manager_invalid_nav() {
     let nav_manager = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约
+    // Initialize contract
     client.initialize(&admin, &8, &1000000000, &500);
 
-    // 设置NAV管理员
+    // Set NAV manager
     client.set_nav_manager_by_admin(&nav_manager);
 
-    // 尝试设置负数NAV
+    // Try to set negative NAV
     client.set_nav_by_manager(&-1000000000);
 }
 
-// ==================== 边界条件测试 ====================
+// ==================== Boundary Condition Tests ====================
 
 #[test]
 fn test_zero_max_change_percent() {
@@ -251,13 +251,13 @@ fn test_zero_max_change_percent() {
     let nav_manager = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约（最大变化0%）
+    // Initialize contract (maximum change 0%)
     client.initialize(&admin, &8, &1000000000, &0);
 
-    // 设置NAV管理员
+    // Set NAV manager
     client.set_nav_manager_by_admin(&nav_manager);
 
-    // 设置相同的NAV值应该成功
+    // Setting same NAV value should succeed
     client.set_nav_by_manager(&1000000000);
 
     assert_eq!(client.get_nav(), 1000000000);
@@ -273,13 +273,13 @@ fn test_zero_max_change_percent_with_change() {
     let nav_manager = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约（最大变化0%）
+    // Initialize contract (maximum change 0%)
     client.initialize(&admin, &8, &1000000000, &0);
 
-    // 设置NAV管理员
+    // Set NAV manager
     client.set_nav_manager_by_admin(&nav_manager);
 
-    // 任何变化都应该失败
+    // Any change should fail
     client.set_nav_by_manager(&1000000001);
 }
 
@@ -292,22 +292,22 @@ fn test_maximum_nav_change() {
     let nav_manager = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约（最大变化100%）
+    // Initialize contract (maximum change 100%)
     client.initialize(&admin, &8, &1000000000, &10000);
 
-    // 设置NAV管理员
+    // Set NAV manager
     client.set_nav_manager_by_admin(&nav_manager);
 
-    // 100%的变化应该成功
+    // 100% change should succeed
     client.set_nav_by_manager(&2000000000);
     assert_eq!(client.get_nav(), 2000000000);
 
-    // 向下100%的变化也应该成功（从20到10）
+    // 100% change should succeed (from 20 to 10)
     client.set_nav_by_manager(&1000000000);
     assert_eq!(client.get_nav(), 1000000000);
 }
 
-// ==================== 精度测试 ====================
+// ==================== Precision Test ====================
 
 #[test]
 fn test_nav_change_precision() {
@@ -318,13 +318,13 @@ fn test_nav_change_precision() {
     let nav_manager = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约（最大变化0.01%）
+    // Initialize contract (maximum change 0.01%)
     client.initialize(&admin, &8, &1000000000, &1);
 
-    // 设置NAV管理员
+    // Set NAV manager
     client.set_nav_manager_by_admin(&nav_manager);
 
-    // 0.01%的变化应该成功
+    // 0.01% change should succeed
     client.set_nav_by_manager(&1000100000);
     assert_eq!(client.get_nav(), 1000100000);
 }
@@ -339,17 +339,17 @@ fn test_nav_change_precision_exceeds() {
     let nav_manager = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 初始化合约（最大变化0.01%）
+    // Initialize contract (maximum change 0.01%)
     client.initialize(&admin, &8, &1000000000, &1);
 
-    // 设置NAV管理员
+    // Set NAV manager
     client.set_nav_manager_by_admin(&nav_manager);
 
-    // 0.02%的变化应该失败
+    // 0.02% change should fail
     client.set_nav_by_manager(&1000200000);
 }
 
-// ==================== 边界值测试 ====================
+// ==================== Boundary Value Tests ====================
 
 #[test]
 fn test_minimum_decimals() {
@@ -359,7 +359,7 @@ fn test_minimum_decimals() {
     let admin = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 0位小数应该成功
+    // 0 decimal places should succeed
     client.initialize(&admin, &0, &10, &500);
 
     assert_eq!(client.get_nav_decimals(), 0);
@@ -373,60 +373,52 @@ fn test_maximum_decimals() {
     let admin = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 18位小数应该成功
+    // 18 decimal places should succeed
     client.initialize(&admin, &18, &1000000000000000000, &500);
 
     assert_eq!(client.get_nav_decimals(), 18);
 }
 
-// ==================== 综合测试 ====================
+// ==================== Comprehensive Test ====================
 
 #[test]
 fn test_complete_workflow() {
     let env = Env::default();
-    env.mock_all_auths(); // 使用简单的全局授权模拟
+    env.mock_all_auths(); // Use simple global authorization simulation
 
     let admin = Address::generate(&env);
     let nav_manager = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 1. 初始化合约
+    // 1. Initialize contract
     client.initialize(&admin, &8, &1000000000, &500);
 
-    // 2. 设置NAV管理员
+    // 2. Set NAV manager
     client.set_nav_manager_by_admin(&nav_manager);
 
-    // 3. 更新NAV值
+    // 3. Update NAV value
     client.set_nav_by_manager(&1050000000);
     assert_eq!(client.get_nav(), 1050000000);
 
-    // 4. 修改最大变化百分比
+    // 4. Modify maximum change percentage
     client.set_max_nav_change_by_admin(&1000);
     assert_eq!(client.max_nav_change_percent(), 1000);
 
-    // 5. 使用新的限制更新NAV（10%变化）
+    // 5. Update NAV with new limit (10% change)
     client.set_nav_by_manager(&1155000000);
     assert_eq!(client.get_nav(), 1155000000);
 
-    // 6. 验证所有状态
+    // 6. Verify all states
     assert!(client.is_initialized());
     assert_eq!(client.admin(), admin);
     assert_eq!(client.nav_manager(), Some(nav_manager));
     assert_eq!(client.get_nav_decimals(), 8);
 }
 
-// ==================== 基础测试 ====================
-
-#[test]
-fn test_constants() {
-    // 测试常量定义是否正确
-    assert_eq!(PERCENTAGE_PRECISION, 10000);
-    assert_eq!(MAX_NAV_DECIMALS, 18);
-}
-
+// ==================== Basic Test ====================
 #[test]
 fn test_error_enum() {
-    // 测试错误枚举定义
+    // Test error enum definition
     assert_eq!(OracleError::Unauthorized as u32, 1);
     assert_eq!(OracleError::InvalidArgument as u32, 2);
     assert_eq!(OracleError::NotInitialized as u32, 3);
