@@ -1,14 +1,16 @@
 #![cfg(test)]
 
 extern crate std;
-use std::println; 
-use soroban_sdk::vec;
 use crate::{FungibleToken, FungibleTokenClient};
+use soroban_sdk::vec;
 use soroban_sdk::{
-    symbol_short,log,
-    testutils::{Address as _, MockAuth, MockAuthInvoke, AuthorizedFunction, AuthorizedInvocation, Events},
-    Address, Env, String, IntoVal, Symbol
+    log, symbol_short,
+    testutils::{
+        Address as _, AuthorizedFunction, AuthorizedInvocation, Events, MockAuth, MockAuthInvoke,
+    },
+    Address, Env, IntoVal, String, Symbol,
 };
+use std::println;
 
 fn create_token_contract(env: &Env) -> (FungibleTokenClient, Address) {
     let contract_address = env.register(FungibleToken, ());
@@ -37,8 +39,8 @@ fn test_initialize_success() {
     assert_eq!(client.name(), String::from_str(&env, "Test Token"));
     assert_eq!(client.symbol(), String::from_str(&env, "TEST"));
     assert_eq!(client.decimals(), 18);
-    assert_eq!(client.total_supply(), 0);  // Initial supply is 0
-    assert_eq!(client.balance_of(&admin), 0);  // Admin initial balance is 0
+    assert_eq!(client.total_supply(), 0); // Initial supply is 0
+    assert_eq!(client.balance_of(&admin), 0); // Admin initial balance is 0
     assert_eq!(client.admin(), Some(admin));
     assert!(client.is_initialized());
 }
@@ -220,29 +222,28 @@ fn test_approve_and_allowance() {
 #[test]
 fn test_admin_mint_and_burn() {
     let env = Env::default();
-    
+
     let admin = Address::generate(&env);
     let minter = Address::generate(&env);
     let (client, _) = create_token_contract(&env);
 
     // Initialize contract
-    env.mock_auths(&[
-        MockAuth {
-            address: &admin,
-            invoke: &MockAuthInvoke {
-                contract: &client.address,
-                fn_name: "initialize",
-                args: (
-                    &admin,
-                    String::from_str(&env, "Test Token"),
-                    String::from_str(&env, "TEST"),
-                    18u32,
-                    &minter  // Now admin is the minter
-                ).into_val(&env),
-                sub_invokes: &[],
-            },
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "initialize",
+            args: (
+                &admin,
+                String::from_str(&env, "Test Token"),
+                String::from_str(&env, "TEST"),
+                18u32,
+                &minter, // Now admin is the minter
+            )
+                .into_val(&env),
+            sub_invokes: &[],
         },
-    ]);
+    }]);
 
     client.initialize(
         &admin,
@@ -252,36 +253,31 @@ fn test_admin_mint_and_burn() {
         &minter,
     );
     // Minter mints some tokens to themselves first
-    env.mock_auths(&[
-        MockAuth {
-            address: &minter,
-            invoke: &MockAuthInvoke {
-                contract: &client.address,
-                fn_name: "mint",
-                args: (&minter, &1000_i128).into_val(&env),
-                sub_invokes: &[],
-            },
+    env.mock_auths(&[MockAuth {
+        address: &minter,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "mint",
+            args: (&minter, &1000_i128).into_val(&env),
+            sub_invokes: &[],
         },
-    ]);
+    }]);
 
     client.mint(&minter, &1000);
     assert_eq!(client.balance_of(&minter), 1000);
     // Minter burns tokens (from their own account)
-    env.mock_auths(&[
-        MockAuth {
-            address: &minter,
-            invoke: &MockAuthInvoke {
-                contract: &client.address,
-                fn_name: "burn",
-                args: (&500_i128,).into_val(&env),  // Use tuple format
-                sub_invokes: &[],
-            },
+    env.mock_auths(&[MockAuth {
+        address: &minter,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "burn",
+            args: (&500_i128,).into_val(&env), // Use tuple format
+            sub_invokes: &[],
         },
-    ]);
+    }]);
 
-    client.burn(&500);  // Burn 500 tokens from minter account
-    assert_eq!(client.balance_of(&minter), 500);  // Minter has 500 tokens remaining
-    
+    client.burn(&500); // Burn 500 tokens from minter account
+    assert_eq!(client.balance_of(&minter), 500); // Minter has 500 tokens remaining
 }
 
 #[test]
@@ -293,25 +289,25 @@ fn test_pause_unpause() {
 
     // Initialize contract
     client.initialize(
-            &admin,
-            &String::from_str(&env, "Test Token"),
-            &String::from_str(&env, "TEST"),
-            &18,
-            &admin,
-        );
+        &admin,
+        &String::from_str(&env, "Test Token"),
+        &String::from_str(&env, "TEST"),
+        &18,
+        &admin,
+    );
 
     // Verify initial state is not paused
     assert!(!client.is_paused());
-    
+
     // Pause contract - OpenZeppelin's pause function calls admin.require_auth()
     client.pause();
-    
+
     // Verify contract is paused
     assert!(client.is_paused());
 
     // Unpause contract - OpenZeppelin's unpause function calls admin.require_auth()
     client.unpause();
-    
+
     // Verify contract is unpaused
     assert!(!client.is_paused());
 }
@@ -461,7 +457,7 @@ fn test_mint_invalid_amount() {
 #[test]
 fn test_mint_unauthorized_non_admin() {
     let env = Env::default();
-    
+
     let admin = Address::generate(&env);
     let _non_admin_user = Address::generate(&env);
     let recipient = Address::generate(&env);
@@ -485,11 +481,11 @@ fn test_mint_unauthorized_non_admin() {
     println!("recipient: {:?}", recipient);
     println!("client.address: {:?}", client.address);
     println!("auth: {:?}", env.auths());
-    client.mint(&recipient,&100);
+    client.mint(&recipient, &100);
     assert_eq!(
         env.auths(),
         std::vec![(
-            admin.clone(), 
+            admin.clone(),
             AuthorizedInvocation {
                 function: AuthorizedFunction::Contract((
                     client.address.clone(),
@@ -724,5 +720,5 @@ fn test_mint_event_detailed() {
                 (admin.clone(), recipient.clone(), 100i128).into_val(&env)
             ),
         ]
-);
-} 
+    );
+}

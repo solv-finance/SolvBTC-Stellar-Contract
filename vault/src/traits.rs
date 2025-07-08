@@ -17,25 +17,25 @@ pub struct WithdrawRequest {
 /// Deposit and withdrawal functionality trait
 pub trait VaultOperations {
     /// User deposit
-    /// 
+    ///
     /// # Parameters
     /// - `from`: User address (caller)
     /// - `currency`: Deposit currency address
     /// - `amount`: Deposit amount
-    /// 
+    ///
     /// # Returns
     /// Returns the amount of tokens minted
     fn deposit(env: Env, from: Address, currency: Address, amount: i128) -> i128;
 
     /// User withdrawal
-    /// 
+    ///
     /// # Parameters
     /// - `from`: User address (caller)
     /// - `target_amount`: Target withdrawal amount
     /// - `nav`: NAV value
     /// - `request_hash`: Request hash
     /// - `signature`: Signature
-    /// 
+    ///
     /// # Returns
     /// Returns the actual withdrawal amount
     fn withdraw(
@@ -95,7 +95,11 @@ pub trait SystemManagement {
     fn set_withdraw_ratio_by_admin(env: Env, withdraw_ratio: i128);
 
     /// Set EIP712 domain parameters by admin
-    fn set_eip712_domain_by_admin(env: Env, name: soroban_sdk::String, version: soroban_sdk::String);
+    fn set_eip712_domain_by_admin(
+        env: Env,
+        name: soroban_sdk::String,
+        version: soroban_sdk::String,
+    );
 }
 
 // ==================== Query Functions ====================
@@ -197,4 +201,4 @@ pub struct CurrencyAddedEvent {
 pub struct CurrencyRemovedEvent {
     pub admin: Address,
     pub currency: Address,
-} 
+}

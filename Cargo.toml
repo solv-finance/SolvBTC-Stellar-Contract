@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "fungible-token",
+    "integration-tests",
+    "minter-manager",
+    "oracle",
+    "vault"
+]
+resolver = "2"
+
+[workspace.dependencies]
+soroban-sdk = "20.0.0" 

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::{MinterManagerError, DataKey, MinterManager, MinterManagerClient};
-    use soroban_sdk::{Env, Address, Map, Vec, testutils::Address as AddressTestUtils};
+    use crate::{DataKey, MinterManager, MinterManagerClient, MinterManagerError};
+    use soroban_sdk::{testutils::Address as AddressTestUtils, Address, Env, Map, Vec};
 
     // Use a valid Stellar address provided by the user
     const VALID_ADDRESS: &str = "GDX2W2LKRSXXU4GEF3STS4C3JJ2H4XLODOZGWPOVFY4LV5ZJ4PNTXYTW";
@@ -40,7 +40,7 @@ mod tests {
         let initialized_key = DataKey::Initialized;
         let minters_key = DataKey::Minters;
         let token_contract_key = DataKey::TokenContract;
-        
+
         assert!(matches!(admin_key, DataKey::Admin));
         assert!(matches!(initialized_key, DataKey::Initialized));
         assert!(matches!(minters_key, DataKey::Minters));
@@ -52,7 +52,7 @@ mod tests {
         // Test contract initialization
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let (client, _) = create_contract(&env);
         let (admin, token_contract, _) = create_test_addresses(&env);
 
@@ -75,7 +75,7 @@ mod tests {
         // Test that repeated initialization should fail
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let (client, _) = create_contract(&env);
         let (admin, token_contract, _) = create_test_addresses(&env);
 
@@ -91,7 +91,7 @@ mod tests {
         // Test admin permission transfer
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let (client, _) = create_contract(&env);
         let (admin, token_contract, _) = create_test_addresses(&env);
         let new_admin = Address::generate(&env);
@@ -110,7 +110,7 @@ mod tests {
         // Test minter management functionality
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let (client, _) = create_contract(&env);
         let (admin, token_contract, minter) = create_test_addresses(&env);
 
@@ -144,7 +144,7 @@ mod tests {
         // Test adding duplicate minter should fail
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let (client, _) = create_contract(&env);
         let (admin, token_contract, minter) = create_test_addresses(&env);
 
@@ -164,7 +164,7 @@ mod tests {
         // Test removing non-existent minter should fail
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let (client, _) = create_contract(&env);
         let (admin, token_contract, minter) = create_test_addresses(&env);
 
@@ -175,13 +175,12 @@ mod tests {
         client.remove_minter_by_admin(&minter);
     }
 
-
     #[test]
     fn test_contract_minter_capacity_limit() {
         // Test minter count limit
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let (client, _) = create_contract(&env);
         let (admin, token_contract, _) = create_test_addresses(&env);
 
@@ -201,10 +200,9 @@ mod tests {
 
     #[test]
     fn test_contract_mint_function() {
-   
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let (client, _) = create_contract(&env);
         let (admin, token_contract, minter) = create_test_addresses(&env);
         let _recipient = Address::generate(&env);
@@ -215,7 +213,6 @@ mod tests {
         // Add minter
         client.add_minter_by_admin(&minter);
 
-      
         assert!(client.is_minter(&minter));
         assert_eq!(client.token_contract(), token_contract);
     }
@@ -226,7 +223,7 @@ mod tests {
         // Test minting invalid amount should fail
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let (client, _) = create_contract(&env);
         let (admin, token_contract, minter) = create_test_addresses(&env);
         let recipient = Address::generate(&env);
@@ -247,7 +244,7 @@ mod tests {
         // Test exceeding minter limit should fail
         let env = Env::default();
         env.mock_all_auths();
-        
+
         let (client, _) = create_contract(&env);
         let (admin, token_contract, _) = create_test_addresses(&env);
 
@@ -271,24 +268,24 @@ mod tests {
     fn test_map_basic_operations() {
         // Test Map basic operations
         let env = Env::default();
-        
+
         // Test empty Map
         let mut minters: Map<Address, i128> = Map::new(&env);
         assert_eq!(minters.len(), 0);
-        
+
         // Test adding
         let address1 = Address::generate(&env);
         minters.set(address1.clone(), 1000);
         assert_eq!(minters.len(), 1);
-        
+
         // Test retrieval
         assert_eq!(minters.get(address1.clone()).unwrap(), 1000);
-        
+
         // Test updating
         minters.set(address1.clone(), 2000);
         assert_eq!(minters.get(address1.clone()).unwrap(), 2000);
         assert_eq!(minters.len(), 1); // Length remains the same
-        
+
         // Test removal
         minters.remove(address1.clone());
         assert_eq!(minters.len(), 0);
@@ -299,23 +296,22 @@ mod tests {
     fn test_minter_limit_logic() {
         // Test minter limit logic
         let env = Env::default();
-        
+
         let mut minters: Map<Address, i128> = Map::new(&env);
         let address1 = Address::generate(&env);
-        
+
         // Set limit
         minters.set(address1.clone(), 1000);
-        
+
         // Simulate mint function's limit check logic
         let limit = minters.get(address1.clone()).unwrap_or(0);
         let amount = 500;
-        
+
         // Verify limit check
         assert!(limit > 0 && amount <= limit); // Should allow minting
-        
+
         // Test exceeding limit case
         let large_amount = 1500;
         assert!(limit > 0 && large_amount > limit); // Should reject minting
     }
-
-} 
+}

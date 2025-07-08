@@ -1,11 +1,13 @@
 #![no_std]
-mod traits;
 mod test;
+mod traits;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, panic_with_error,
-    Address, Env, IntoVal, Symbol, Vec, Map,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal,
+    Map, Symbol, Vec,
 };
-use traits::{InitializableTrait, AdminTrait, MinterManagementTrait, TokenOperationsTrait, QueryTrait};
+use traits::{
+    AdminTrait, InitializableTrait, MinterManagementTrait, QueryTrait, TokenOperationsTrait,
+};
 const MAX_MINTERS: u32 = 10;
 // ==================== Error Definitions ====================
 
@@ -61,22 +63,22 @@ impl InitializableTrait for MinterManager {
 
         // Set admin
         env.storage().instance().set(&DataKey::Admin, &admin);
-        
+
         // Set token contract address
-        env.storage().instance().set(&DataKey::TokenContract, &token_contract);
-        
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenContract, &token_contract);
+
         // Initialize minters mapping
         let minters: Map<Address, i128> = Map::new(&env);
         env.storage().instance().set(&DataKey::Minters, &minters);
-        
+
         // Mark as initialized
         env.storage().instance().set(&DataKey::Initialized, &true);
 
         // Publish initialization event
-        env.events().publish(
-            (Symbol::new(&env, "initialize"),),
-            (admin, token_contract)
-        );
+        env.events()
+            .publish((Symbol::new(&env, "initialize"),), (admin, token_contract));
     }
 
     fn is_initialized(env: Env) -> bool {
@@ -94,14 +96,14 @@ impl AdminTrait for MinterManager {
 
     fn transfer_admin(env: Env, new_admin: Address) {
         let current_admin = Self::require_admin(&env);
-        
+
         // Set new admin
         env.storage().instance().set(&DataKey::Admin, &new_admin);
 
         // Publish admin transfer event
         env.events().publish(
             (Symbol::new(&env, "admin_transferred"),),
-            (current_admin, new_admin)
+            (current_admin, new_admin),
         );
     }
 }
@@ -112,20 +114,21 @@ impl AdminTrait for MinterManager {
 impl MinterManagementTrait for MinterManager {
     fn add_minter_by_admin(env: Env, minter: Address) {
         let admin = Self::require_admin(&env);
-        
+
         // Get current minters mapping
-        let mut minters: Map<Address, i128> = env.storage().instance().get(&DataKey::Minters).unwrap();
-        
+        let mut minters: Map<Address, i128> =
+            env.storage().instance().get(&DataKey::Minters).unwrap();
+
         // Check minter count limit (max 10)
         if minters.len() >= MAX_MINTERS {
             panic_with_error!(&env, MinterManagerError::TooManyMinters);
         }
-        
+
         // Check if minter already exists
         if minters.contains_key(minter.clone()) {
             panic_with_error!(&env, MinterManagerError::MinterAlreadyExists);
         }
-        
+
         // Add new minter, default limit is 0 (needs to be set separately)
         minters.set(minter.clone(), 0);
         env.storage().instance().set(&DataKey::Minters, &minters);
@@ -133,41 +136,40 @@ impl MinterManagementTrait for MinterManager {
         // Publish add minter event
         env.events().publish(
             (Symbol::new(&env, "minter_added"),),
-            (admin, minter, 0_i128)
+            (admin, minter, 0_i128),
         );
     }
 
     fn remove_minter_by_admin(env: Env, minter: Address) {
         let admin = Self::require_admin(&env);
-        
+
         // Get current minters mapping
-        let mut minters: Map<Address, i128> = env.storage().instance().get(&DataKey::Minters).unwrap();
-        
+        let mut minters: Map<Address, i128> =
+            env.storage().instance().get(&DataKey::Minters).unwrap();
+
         // Check if minter exists
         if !minters.contains_key(minter.clone()) {
             panic_with_error!(&env, MinterManagerError::MinterNotFound);
         }
-        
+
         // Remove minter
         minters.remove(minter.clone());
         env.storage().instance().set(&DataKey::Minters, &minters);
 
         // Publish remove minter event
-        env.events().publish(
-            (Symbol::new(&env, "minter_removed"),),
-            (admin, minter)
-        );
+        env.events()
+            .publish((Symbol::new(&env, "minter_removed"),), (admin, minter));
     }
 
     fn get_minters(env: Env) -> Vec<Address> {
         let minters: Map<Address, i128> = env.storage().instance().get(&DataKey::Minters).unwrap();
         let mut result: Vec<Address> = Vec::new(&env);
-        
+
         // Iterate through Map to get all addresses
         for (address, _) in minters.iter() {
             result.push_back(address);
         }
-        
+
         result
     }
 
@@ -186,23 +188,20 @@ impl TokenOperationsTrait for MinterManager {
         if amount <= 0 {
             panic_with_error!(&env, MinterManagerError::InvalidArgument);
         }
-        
-        // Validate if caller is a minter  
+
+        // Validate if caller is a minter
         Self::require_minter(&env, &from);
-       
-        
+
         // Get token contract address
         // let token_contract = Self::get_token_contract(&env);
-        
+
         // Call token contract's mint function
         let token_client = FungibleTokenClient::new(&env, &token_contract);
         token_client.mint(&env, &to, &amount);
 
         // Publish mint event
-        env.events().publish(
-            (Symbol::new(&env, "mint"),),
-            (from, to, amount)
-        );
+        env.events()
+            .publish((Symbol::new(&env, "mint"),), (from, to, amount));
     }
 
     fn burn(env: Env, from: Address, token_contract: Address, amount: i128) {
@@ -211,21 +210,19 @@ impl TokenOperationsTrait for MinterManager {
             panic_with_error!(&env, MinterManagerError::InvalidArgument);
         }
 
-         // Validate if caller is a minter  
-         Self::require_minter(&env, &from);
-        
+        // Validate if caller is a minter
+        Self::require_minter(&env, &from);
+
         // Get token contract address
         // let token_contract = Self::get_token_contract(&env);
-        
+
         // Call token contract's burn function
         let token_client = FungibleTokenClient::new(&env, &token_contract);
         token_client.burn(&env, &amount);
 
         // Publish burn event
-        env.events().publish(
-            (Symbol::new(&env, "burn"),),
-            (from, amount)
-        );
+        env.events()
+            .publish((Symbol::new(&env, "burn"),), (from, amount));
     }
 }
 
@@ -248,7 +245,10 @@ impl MinterManager {
 
     /// Get token contract address
     fn get_token_contract(env: &Env) -> Address {
-        env.storage().instance().get(&DataKey::TokenContract).unwrap()
+        env.storage()
+            .instance()
+            .get(&DataKey::TokenContract)
+            .unwrap()
     }
 
     /// Check if contract is initialized
@@ -288,20 +288,11 @@ impl FungibleTokenClient {
 
     pub fn mint(&self, env: &Env, to: &Address, amount: &i128) {
         let args = (to.clone(), amount.clone()).into_val(env);
-        let _: () = env.invoke_contract(
-            &self.contract_id,
-            &Symbol::new(env, "mint"),
-            args,
-        );
+        let _: () = env.invoke_contract(&self.contract_id, &Symbol::new(env, "mint"), args);
     }
 
     pub fn burn(&self, env: &Env, amount: &i128) {
         let args = (amount.clone(),).into_val(env);
-        let _: () = env.invoke_contract(
-            &self.contract_id,
-            &Symbol::new(env, "burn"),
-            args,
-        );
+        let _: () = env.invoke_contract(&self.contract_id, &Symbol::new(env, "burn"), args);
     }
 }
-

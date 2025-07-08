@@ -4,11 +4,11 @@
 mod test;
 mod traits;
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, panic_with_error,
-    symbol_short, log, Address, Bytes, Env, IntoVal, Symbol, Vec, Map, FromVal, vec
-};
 use soroban_sdk::xdr::ToXdr;
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, log, panic_with_error, symbol_short, vec,
+    Address, Bytes, Env, FromVal, IntoVal, Map, Symbol, Vec,
+};
 
 // Signature verification uses Soroban SDK built-in functionality
 
@@ -69,7 +69,6 @@ pub struct EIP712Domain {
     pub verifying_contract: Address,
     pub salt: soroban_sdk::Bytes,
 }
-
 
 /// Error code definition
 #[contracterror]
@@ -159,27 +158,50 @@ impl VaultInitialization for SolvBTCVault {
 
         // Set contract status
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::MinterManager, &minter_manager);
-        env.storage().instance().set(&DataKey::TokenContract, &token_contract);
+        env.storage()
+            .instance()
+            .set(&DataKey::MinterManager, &minter_manager);
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenContract, &token_contract);
         env.storage().instance().set(&DataKey::Oracle, &oracle);
-        env.storage().instance().set(&DataKey::Treasurer, &treasurer);
-        env.storage().instance().set(&DataKey::WithdrawVerifier, &withdraw_verifier);
-        env.storage().instance().set(&DataKey::WithdrawRatio, &withdraw_ratio);
+        env.storage()
+            .instance()
+            .set(&DataKey::Treasurer, &treasurer);
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawVerifier, &withdraw_verifier);
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawRatio, &withdraw_ratio);
         // Initialize empty currency Map
         let empty_currencies: Map<Address, bool> = Map::new(&env);
-        env.storage().instance().set(&DataKey::SupportedCurrencies, &empty_currencies);
-        
+        env.storage()
+            .instance()
+            .set(&DataKey::SupportedCurrencies, &empty_currencies);
+
         // Set EIP712 domain parameter default values
-        env.storage().instance().set(&DataKey::EIP712DomainName, &eip712_domain_name);
-        env.storage().instance().set(&DataKey::EIP712DomainVersion, &eip712_domain_version);
-        
+        env.storage()
+            .instance()
+            .set(&DataKey::EIP712DomainName, &eip712_domain_name);
+        env.storage()
+            .instance()
+            .set(&DataKey::EIP712DomainVersion, &eip712_domain_version);
+
         // Mark as initialized
         env.storage().instance().set(&DataKey::Initialized, &true);
 
         // Publish initialization event
         env.events().publish(
             (symbol_short!("init"),),
-            (admin.clone(), minter_manager, oracle, treasurer, withdraw_verifier.clone(), withdraw_ratio)
+            (
+                admin.clone(),
+                minter_manager,
+                oracle,
+                treasurer,
+                withdraw_verifier.clone(),
+                withdraw_ratio,
+            ),
         );
     }
 }
@@ -190,7 +212,7 @@ impl VaultInitialization for SolvBTCVault {
 impl VaultOperations for SolvBTCVault {
     fn deposit(env: Env, from: Address, currency: Address, amount: i128) -> i128 {
         from.require_auth(); // Verify caller identity
-        
+
         // Verify parameters
         if amount <= 0 {
             panic_with_error!(&env, VaultError::InvalidAmount);
@@ -201,7 +223,7 @@ impl VaultOperations for SolvBTCVault {
             panic_with_error!(&env, VaultError::CurrencyNotSupported);
         }
         let treasurer = Self::get_treasurer_internal(&env);
-        
+
         // Transfer from user to treasurer
         Self::transfer_from_user(&env, &currency, &from, &treasurer, amount);
 
@@ -210,14 +232,19 @@ impl VaultOperations for SolvBTCVault {
         if nav <= 0 {
             panic_with_error!(&env, VaultError::InvalidNav);
         }
-       
 
         // Calculate the amount of tokens to be minted
         let minted_tokens = Self::calculate_mint_amount(&env, amount, nav);
         // Get token contract address
         let token_contract = Self::get_token_contract_internal(&env);
         // Call Minter Manager to mint tokens
-        Self::mint_tokens(&env, &env.current_contract_address(), &from, token_contract.clone(), minted_tokens);
+        Self::mint_tokens(
+            &env,
+            &env.current_contract_address(),
+            &from,
+            token_contract.clone(),
+            minted_tokens,
+        );
 
         // Publish deposit event
         env.events().publish(
@@ -229,7 +256,7 @@ impl VaultOperations for SolvBTCVault {
                 token_contract,
                 minted_tokens,
                 nav,
-            }
+            },
         );
 
         minted_tokens
@@ -245,12 +272,12 @@ impl VaultOperations for SolvBTCVault {
         signature: Bytes,
     ) -> i128 {
         from.require_auth(); // Verify caller identity
-        
+
         // Verify parameters
         if target_amount <= 0 {
             panic_with_error!(&env, VaultError::InvalidAmount);
         }
-        
+
         if nav <= 0 {
             panic_with_error!(&env, VaultError::InvalidNav);
         }
@@ -264,8 +291,16 @@ impl VaultOperations for SolvBTCVault {
         let withdraw_currency = Self::get_withdraw_currency_internal(&env);
 
         // Verify signature
-        Self::verify_withdraw_signature(&env, &from, target_amount, &withdraw_currency, nav, &request_hash, timestamp, &signature);
-
+        Self::verify_withdraw_signature(
+            &env,
+            &from,
+            target_amount,
+            &withdraw_currency,
+            nav,
+            &request_hash,
+            timestamp,
+            &signature,
+        );
 
         // Get fee ratio
         let withdraw_ratio = Self::get_withdraw_ratio_internal(&env);
@@ -289,7 +324,9 @@ impl VaultOperations for SolvBTCVault {
         Self::transfer_to_user(&env, &withdraw_currency, &from, actual_amount);
 
         // Mark request hash as used
-        env.storage().instance().set(&DataKey::UsedRequestHash(request_hash.clone()), &true);
+        env.storage()
+            .instance()
+            .set(&DataKey::UsedRequestHash(request_hash.clone()), &true);
 
         // Publish withdrawal event
         env.events().publish(
@@ -303,7 +340,7 @@ impl VaultOperations for SolvBTCVault {
                 burned_tokens,
                 nav,
                 request_hash: request_hash.clone(),
-            }
+            },
         );
 
         actual_amount
@@ -312,7 +349,7 @@ impl VaultOperations for SolvBTCVault {
     fn treasurer_deposit(env: Env, amount: i128) {
         let treasurer = Self::get_treasurer_internal(&env);
         treasurer.require_auth(); // Verify caller identity
-        
+
         // Verify parameters
         if amount <= 0 {
             panic_with_error!(&env, VaultError::InvalidAmount);
@@ -324,13 +361,17 @@ impl VaultOperations for SolvBTCVault {
         // Treasurer deposits liquidity (this can be implemented based on specific requirements)
         // Assuming transfer from treasurer to contract address
         let contract_address = env.current_contract_address();
-        Self::transfer_from_user(&env, &withdraw_currency, &treasurer, &contract_address, amount);
+        Self::transfer_from_user(
+            &env,
+            &withdraw_currency,
+            &treasurer,
+            &contract_address,
+            amount,
+        );
 
         // Publish event
-        env.events().publish(
-            (symbol_short!("tres_dep"),),
-            (treasurer, amount)
-        );
+        env.events()
+            .publish((symbol_short!("tres_dep"),), (treasurer, amount));
     }
 }
 
@@ -342,7 +383,9 @@ impl CurrencyManagement for SolvBTCVault {
         let admin = Self::require_admin(&env);
 
         // Get current currency Map
-        let mut currencies: Map<Address, bool> = env.storage().instance()
+        let mut currencies: Map<Address, bool> = env
+            .storage()
+            .instance()
             .get(&DataKey::SupportedCurrencies)
             .unwrap_or_else(|| Map::new(&env));
 
@@ -358,7 +401,9 @@ impl CurrencyManagement for SolvBTCVault {
 
         // Add currency
         currencies.set(currency.clone(), true);
-        env.storage().instance().set(&DataKey::SupportedCurrencies, &currencies);
+        env.storage()
+            .instance()
+            .set(&DataKey::SupportedCurrencies, &currencies);
 
         // Publish event
         env.events().publish(
@@ -366,7 +411,7 @@ impl CurrencyManagement for SolvBTCVault {
             CurrencyAddedEvent {
                 admin,
                 currency: currency.clone(),
-            }
+            },
         );
     }
 
@@ -374,7 +419,9 @@ impl CurrencyManagement for SolvBTCVault {
         let admin = Self::require_admin(&env);
 
         // Get current currency Map
-        let mut currencies: Map<Address, bool> = env.storage().instance()
+        let mut currencies: Map<Address, bool> = env
+            .storage()
+            .instance()
             .get(&DataKey::SupportedCurrencies)
             .unwrap_or_else(|| Map::new(&env));
 
@@ -385,7 +432,9 @@ impl CurrencyManagement for SolvBTCVault {
 
         // Remove currency
         currencies.remove(currency.clone());
-        env.storage().instance().set(&DataKey::SupportedCurrencies, &currencies);
+        env.storage()
+            .instance()
+            .set(&DataKey::SupportedCurrencies, &currencies);
 
         // Publish event
         env.events().publish(
@@ -393,7 +442,7 @@ impl CurrencyManagement for SolvBTCVault {
             CurrencyRemovedEvent {
                 admin,
                 currency: currency.clone(),
-            }
+            },
         );
     }
 
@@ -405,17 +454,21 @@ impl CurrencyManagement for SolvBTCVault {
             panic_with_error!(&env, VaultError::CurrencyNotSupported);
         }
 
-        env.storage().instance().set(&DataKey::WithdrawCurrency, &currency);
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawCurrency, &currency);
 
         // Publish event
         env.events().publish(
             (symbol_short!("wd_curr"),),
-            (Self::get_admin_internal(&env), currency)
+            (Self::get_admin_internal(&env), currency),
         );
     }
 
     fn get_supported_currencies(env: Env) -> Vec<Address> {
-        let currencies: Map<Address, bool> = env.storage().instance()
+        let currencies: Map<Address, bool> = env
+            .storage()
+            .instance()
             .get(&DataKey::SupportedCurrencies)
             .unwrap_or_else(|| Map::new(&env));
         currencies.keys()
@@ -436,13 +489,15 @@ impl CurrencyManagement for SolvBTCVault {
 impl SystemManagement for SolvBTCVault {
     fn set_withdraw_verifier_by_admin(env: Env, verifier_address: Address) {
         Self::require_admin(&env);
-        
-        env.storage().instance().set(&DataKey::WithdrawVerifier, &verifier_address);
+
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawVerifier, &verifier_address);
 
         // Publish event
         env.events().publish(
             (symbol_short!("wd_verif"),),
-            (Self::get_admin_internal(&env), verifier_address.clone())
+            (Self::get_admin_internal(&env), verifier_address.clone()),
         );
     }
 
@@ -453,29 +508,33 @@ impl SystemManagement for SolvBTCVault {
         // Publish event
         env.events().publish(
             (symbol_short!("oracle"),),
-            (Self::get_admin_internal(&env), oracle)
+            (Self::get_admin_internal(&env), oracle),
         );
     }
 
     fn set_treasurer_by_admin(env: Env, treasurer: Address) {
         Self::require_admin(&env);
-        env.storage().instance().set(&DataKey::Treasurer, &treasurer);
+        env.storage()
+            .instance()
+            .set(&DataKey::Treasurer, &treasurer);
 
         // Publish event
         env.events().publish(
             (symbol_short!("treasur"),),
-            (Self::get_admin_internal(&env), treasurer)
+            (Self::get_admin_internal(&env), treasurer),
         );
     }
 
     fn set_minter_manager_by_admin(env: Env, minter_manager: Address) {
         Self::require_admin(&env);
-        env.storage().instance().set(&DataKey::MinterManager, &minter_manager);
+        env.storage()
+            .instance()
+            .set(&DataKey::MinterManager, &minter_manager);
 
         // Publish event
         env.events().publish(
             (symbol_short!("minter"),),
-            (Self::get_admin_internal(&env), minter_manager)
+            (Self::get_admin_internal(&env), minter_manager),
         );
     }
 
@@ -487,26 +546,36 @@ impl SystemManagement for SolvBTCVault {
             panic_with_error!(&env, VaultError::InvalidWithdrawRatio);
         }
 
-        env.storage().instance().set(&DataKey::WithdrawRatio, &withdraw_ratio);
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawRatio, &withdraw_ratio);
 
         // Publish event
         env.events().publish(
             (symbol_short!("wd_ratio"),),
-            (Self::get_admin_internal(&env), withdraw_ratio)
+            (Self::get_admin_internal(&env), withdraw_ratio),
         );
     }
 
-    fn set_eip712_domain_by_admin(env: Env, name: soroban_sdk::String, version: soroban_sdk::String) {
+    fn set_eip712_domain_by_admin(
+        env: Env,
+        name: soroban_sdk::String,
+        version: soroban_sdk::String,
+    ) {
         Self::require_admin(&env);
 
         // Set EIP712 domain parameter
-        env.storage().instance().set(&DataKey::EIP712DomainName, &name);
-        env.storage().instance().set(&DataKey::EIP712DomainVersion, &version);
+        env.storage()
+            .instance()
+            .set(&DataKey::EIP712DomainName, &name);
+        env.storage()
+            .instance()
+            .set(&DataKey::EIP712DomainVersion, &version);
 
         // Publish event
         env.events().publish(
             (symbol_short!("eip712"),),
-            (Self::get_admin_internal(&env), name.clone(), version)
+            (Self::get_admin_internal(&env), name.clone(), version),
         );
     }
 }
@@ -520,7 +589,8 @@ impl VaultQuery for SolvBTCVault {
     }
 
     fn get_withdraw_verifier(env: Env) -> Address {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&DataKey::WithdrawVerifier)
             .unwrap_or_else(|| panic_with_error!(&env, VaultError::WithdrawVerifierNotSet))
     }
@@ -534,11 +604,17 @@ impl VaultQuery for SolvBTCVault {
     }
 
     fn get_minter_manager(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::MinterManager).unwrap()
+        env.storage()
+            .instance()
+            .get(&DataKey::MinterManager)
+            .unwrap()
     }
 
     fn get_withdraw_ratio(env: Env) -> i128 {
-        env.storage().instance().get(&DataKey::WithdrawRatio).unwrap()
+        env.storage()
+            .instance()
+            .get(&DataKey::WithdrawRatio)
+            .unwrap()
     }
 
     fn is_initialized(env: Env) -> bool {
@@ -546,20 +622,22 @@ impl VaultQuery for SolvBTCVault {
     }
 
     fn get_eip712_domain_name(env: Env) -> soroban_sdk::String {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&DataKey::EIP712DomainName)
             .unwrap_or_else(|| soroban_sdk::String::from_str(&env, "SolvBTC Vault"))
     }
 
     fn get_eip712_domain_version(env: Env) -> soroban_sdk::String {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&DataKey::EIP712DomainVersion)
             .unwrap_or_else(|| soroban_sdk::String::from_str(&env, "1"))
     }
 
     fn get_eip712_chain_id(env: Env) -> soroban_sdk::Bytes {
         let network_id = env.ledger().network_id(); // Return BytesN<32>
-        // Directly return network_id, convert to Bytes type
+                                                    // Directly return network_id, convert to Bytes type
         network_id.into()
     }
 
@@ -576,7 +654,6 @@ impl SolvBTCVault {
         env.storage().instance().has(&DataKey::Initialized)
     }
 
-
     /// Create withdrawal message for signature verification
     fn create_withdraw_message(
         env: &Env,
@@ -588,7 +665,7 @@ impl SolvBTCVault {
         timestamp: u64,
     ) -> Bytes {
         let mut encoded = Bytes::new(env);
-                
+
         // Add user address identifier
         encoded.append(&_user.to_xdr(env));
 
@@ -601,37 +678,33 @@ impl SolvBTCVault {
         // Use request hash to identify user, avoid complex address conversion
         let user_hash = env.crypto().sha256(request_hash);
         encoded.append(&user_hash.into());
-        
-        
+
         // Add NAV value
         encoded.append(&Bytes::from_array(env, &nav.to_be_bytes()));
-        
+
         // Add request hash
         encoded.append(request_hash);
-        
+
         // Add timestamp
         encoded.append(&Bytes::from_array(env, &timestamp.to_be_bytes()));
-        
+
         encoded
     }
 
-        // Create EIP712 standard signature verification message: \x19\x01 + DomainSeparator + MessageHash
-    fn create_eip712_signature_message(  
-        env: &Env,
-        message_hash: &Bytes,
-    ) -> Bytes {
+    // Create EIP712 standard signature verification message: \x19\x01 + DomainSeparator + MessageHash
+    fn create_eip712_signature_message(env: &Env, message_hash: &Bytes) -> Bytes {
         let mut encoded = Bytes::new(env);
-        
+
         // 1. Add EIP712 fixed prefix \x19\x01
         encoded.append(&Bytes::from_slice(env, &[0x19, 0x01]));
-        
+
         // 2. Calculate and add DomainSeparator
         let domain_separator = Self::calculate_domain_separator(env);
         encoded.append(&domain_separator);
-        
+
         // 3. Add MessageHash
         encoded.append(message_hash);
-        
+
         encoded
     }
 
@@ -639,62 +712,62 @@ impl SolvBTCVault {
     fn calculate_domain_separator(env: &Env) -> Bytes {
         // Implement domain separator calculation according to EIP712 standard
         // DomainSeparator = keccak256(typeHash + nameHash + versionHash + chainId + verifyingContract + salt)
-        
+
         let mut domain_encoded = Bytes::new(env);
-        
+
         // 1. EIP712Domain's TypeHash
         // keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)")
-        let type_hash = env.crypto().sha256(&Bytes::from_slice(env, 
+        let type_hash = env.crypto().sha256(&Bytes::from_slice(env,
             b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)"));
         domain_encoded.append(&type_hash.into());
-        
+
         // 2. name field's hash
         // Get domain name from storage
         let name = Self::get_eip712_domain_name_internal(env);
-        
+
         // Use copy_into_slice method to copy String content to byte array
         let name_len = name.len() as usize;
         // Create fixed-size buffer
         let mut name_buffer = [0u8; 100]; // Use sufficiently large buffer
-        // Copy String content to buffer
+                                          // Copy String content to buffer
         name.copy_into_slice(&mut name_buffer[..name_len]);
-        
+
         // Convert byte array to Bytes
         let name_bytes = Bytes::from_slice(env, &name_buffer[..name_len]);
         let name_hash = env.crypto().sha256(&name_bytes);
         domain_encoded.append(&name_hash.into());
-        
+
         // 3. version field's hash
         // Get domain version from storage
         let version = Self::get_eip712_domain_version_internal(env);
-        
+
         // Use copy_into_slice method to copy String content to byte array
         let version_len = version.len() as usize;
         // Create fixed-size buffer
         let mut version_buffer = [0u8; 20]; // Use sufficiently large buffer
-        // Copy String content to buffer
+                                            // Copy String content to buffer
         version.copy_into_slice(&mut version_buffer[..version_len]);
-        
+
         // Convert byte array to Bytes
         let version_bytes = Bytes::from_slice(env, &version_buffer[..version_len]);
         let version_hash = env.crypto().sha256(&version_bytes);
         domain_encoded.append(&version_hash.into());
-        
+
         // 4. chainId field (32 bytes)
         let chain_id = Self::get_eip712_chain_id_internal(env);
         domain_encoded.append(&chain_id);
-        
+
         // 5. verifyingContract field's hash
         let verifying_contract = env.current_contract_address();
         // Directly use byte representation of contract address
         let contract_xdr = verifying_contract.to_xdr(env);
         let contract_hash = env.crypto().sha256(&contract_xdr);
         domain_encoded.append(&contract_hash.into());
-        
+
         // 6. salt field (32 bytes of zero value)
         let salt = Bytes::from_array(env, &[0u8; 32]);
         domain_encoded.append(&salt);
-        
+
         // Return domain separator's hash (according to EIP712 standard should use keccak256, but Soroban uses sha256)
         env.crypto().sha256(&domain_encoded).into()
     }
@@ -708,21 +781,24 @@ impl SolvBTCVault {
         // Use Soroban SDK built-in ed25519_verify function
         let public_key = soroban_sdk::BytesN::from_array(env, public_key_bytes);
         let signature = soroban_sdk::BytesN::from_array(env, signature_bytes);
-        
+
         // Call Soroban built-in ed25519 verification, if signature is invalid will panic
-        env.crypto().ed25519_verify(&public_key, message, &signature);
+        env.crypto()
+            .ed25519_verify(&public_key, message, &signature);
     }
 
     /// Get verifier public key
     fn get_verifier_public_key(env: &Env) -> [u8; 32] {
-        let verifier_address: Address = env.storage().instance()
+        let verifier_address: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::WithdrawVerifier)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawVerifierNotSet));
-        
+
         // Extract public key bytes from Address
         // Note: Here we assume Address is of Ed25519 public key type
         let address_xdr = verifier_address.to_xdr(env);
-        
+
         // Extract public key from XDR (last 32 bytes of Address)
         let mut public_key = [0u8; 32];
         let xdr_len = address_xdr.len();
@@ -734,10 +810,9 @@ impl SolvBTCVault {
         } else {
             panic_with_error!(env, VaultError::InvalidArgument);
         }
-        
+
         public_key
     }
-
 
     /// Get admin address
     fn get_admin_internal(env: &Env) -> Address {
@@ -753,28 +828,33 @@ impl SolvBTCVault {
 
     /// Get treasurer address
     fn get_treasurer_internal(env: &Env) -> Address {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&DataKey::Treasurer)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::TreasurerNotSet))
     }
 
     /// Get withdrawal currency
     fn get_withdraw_currency_internal(env: &Env) -> Address {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&DataKey::WithdrawCurrency)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawCurrencyNotSet))
     }
 
     /// Get withdrawal fee ratio
     fn get_withdraw_ratio_internal(env: &Env) -> i128 {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&DataKey::WithdrawRatio)
             .unwrap_or(0) // Default to 0 (no fee)
     }
 
     /// Check if currency is supported
     fn is_currency_supported_internal(env: &Env, currency: &Address) -> bool {
-        let currencies: Map<Address, bool> = env.storage().instance()
+        let currencies: Map<Address, bool> = env
+            .storage()
+            .instance()
             .get(&DataKey::SupportedCurrencies)
             .unwrap_or_else(|| Map::new(env));
         currencies.contains_key(currency.clone())
@@ -782,7 +862,9 @@ impl SolvBTCVault {
 
     /// Get NAV value from Oracle
     fn get_nav_from_oracle(env: &Env) -> i128 {
-        let oracle_address: Address = env.storage().instance()
+        let oracle_address: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::Oracle)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::OracleNotSet));
 
@@ -796,7 +878,9 @@ impl SolvBTCVault {
 
     /// Get NAV decimals from Oracle
     fn get_nav_decimals_from_oracle(env: &Env) -> u32 {
-        let oracle_address: Address = env.storage().instance()
+        let oracle_address: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::Oracle)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::OracleNotSet));
 
@@ -810,7 +894,9 @@ impl SolvBTCVault {
 
     /// Mint tokens
     fn mint_tokens(env: &Env, from: &Address, to: &Address, token_contract: Address, amount: i128) {
-        let minter_manager: Address = env.storage().instance()
+        let minter_manager: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::MinterManager)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::MinterManagerNotSet));
 
@@ -824,7 +910,9 @@ impl SolvBTCVault {
 
     /// Burn tokens
     fn burn_tokens(env: &Env, from: &Address, token_contract: Address, amount: i128) {
-        let minter_manager: Address = env.storage().instance()
+        let minter_manager: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::MinterManager)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::MinterManagerNotSet));
 
@@ -910,7 +998,9 @@ impl SolvBTCVault {
 
     /// Check if request hash is already used
     fn is_request_hash_used(env: &Env, request_hash: &Bytes) -> bool {
-        env.storage().instance().has(&DataKey::UsedRequestHash(request_hash.clone()))
+        env.storage()
+            .instance()
+            .has(&DataKey::UsedRequestHash(request_hash.clone()))
     }
 
     // Calculate mint amount for user after user Deposit
@@ -918,38 +1008,40 @@ impl SolvBTCVault {
         // Get NAV decimals from Oracle
         let nav_decimals = Self::get_nav_decimals_from_oracle(env);
         let precision = 10_i128.pow(nav_decimals);
-        amount * nav / precision 
+        amount * nav / precision
     }
- 
 
     /// Calculate withdrawal amount
     fn calculate_withdraw_amount(env: &Env, target_amount: i128, nav: i128) -> i128 {
         // Get NAV decimals from Oracle
         let nav_decimals = Self::get_nav_decimals_from_oracle(env);
-        
+
         // Calculate precision divisor: 10^nav_decimals
         let precision = 10_i128.pow(nav_decimals);
-        
+
         // Calculate actual amount: target_amount * nav / precision
         target_amount * nav / precision
     }
 
     fn get_token_contract_internal(env: &Env) -> Address {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&DataKey::TokenContract)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::TokenContractNotSet))
     }
 
     /// Get EIP712 domain name (internal function)
     fn get_eip712_domain_name_internal(env: &Env) -> soroban_sdk::String {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&DataKey::EIP712DomainName)
             .unwrap_or_else(|| soroban_sdk::String::from_str(env, "SolvBTC Vault"))
     }
 
     /// Get EIP712 domain version (internal function)
     fn get_eip712_domain_version_internal(env: &Env) -> soroban_sdk::String {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&DataKey::EIP712DomainVersion)
             .unwrap_or_else(|| soroban_sdk::String::from_str(env, "1"))
     }
@@ -957,9 +1049,7 @@ impl SolvBTCVault {
     /// Get EIP712 chain ID (internal function)
     fn get_eip712_chain_id_internal(env: &Env) -> soroban_sdk::Bytes {
         let network_id = env.ledger().network_id(); // Return BytesN<32>
-        // Directly return network_id, convert to Bytes type
+                                                    // Directly return network_id, convert to Bytes type
         network_id.into()
     }
-
-
-} 
+}

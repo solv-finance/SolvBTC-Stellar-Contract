@@ -4,7 +4,7 @@ mod test;
 mod traits;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, contractmeta, log, panic_with_error,
+    contract, contracterror, contractimpl, contractmeta, contracttype, log, panic_with_error,
     Address, Env, String, Symbol,
 };
 use stellar_fungible;
@@ -13,8 +13,8 @@ use stellar_pausable_macros::when_not_paused;
 
 // Import our defined traits
 use traits::{
-    TokenInterface, MintableToken, BurnableToken, PausableToken, 
-    BlacklistTrait, AdminTrait, InternalHelperTrait
+    AdminTrait, BlacklistTrait, BurnableToken, InternalHelperTrait, MintableToken, PausableToken,
+    TokenInterface,
 };
 
 /********** Ledger Thresholds **********/
@@ -113,12 +113,14 @@ impl TokenInterface for FungibleToken {
 
         // Verify admin permissions
         admin.require_auth();
-        
+
         // Set contract admin
         env.storage().instance().set(&DataKey::Admin, &admin);
         // Set mint authorization
-        env.storage().instance().set(&DataKey::MintAuthorization, &mint_authorization);
-        
+        env.storage()
+            .instance()
+            .set(&DataKey::MintAuthorization, &mint_authorization);
+
         // Set token metadata
         let metadata = TokenMetadata {
             name: name.clone(),
@@ -126,108 +128,106 @@ impl TokenInterface for FungibleToken {
             decimals,
         };
         env.storage().instance().set(&DataKey::Metadata, &metadata);
-        
+
         // Mark as initialized
         env.storage().instance().set(&DataKey::Initialized, &true);
 
         // Publish initialization event
         env.events().publish(
-            (Symbol::new(&env,"initialize"),),
-            (admin.clone(), name, symbol, decimals)
+            (Symbol::new(&env, "initialize"),),
+            (admin.clone(), name, symbol, decimals),
         );
     }
 
     fn name(env: Env) -> String {
         Self::get_metadata(&env).name
     }
-    
+
     fn symbol(env: Env) -> String {
         Self::get_metadata(&env).symbol
     }
-    
+
     fn decimals(env: Env) -> u32 {
         Self::get_metadata(&env).decimals
     }
-    
+
     fn total_supply(env: Env) -> i128 {
         stellar_fungible::total_supply(&env)
     }
-    
+
     fn balance_of(env: Env, account: Address) -> i128 {
         stellar_fungible::balance(&env, &account)
     }
-    
+
     fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         // Check if paused
         Self::require_not_paused(&env);
-        
+
         // Check blacklist
         Self::require_not_blacklisted(&env, &from);
         Self::require_not_blacklisted(&env, &to);
-        
+
         // Validate parameters
         Self::require_positive_amount(&env, amount);
-        
+
         // Use OpenZeppelin FungibleToken transfer
         stellar_fungible::transfer(&env, &from, &to, amount);
 
         // Publish transfer event
-        env.events().publish(
-            (Symbol::new(&env,"transfer"),),
-            (from, to, amount)
-        );
+        env.events()
+            .publish((Symbol::new(&env, "transfer"),), (from, to, amount));
     }
-    
+
     fn approve(env: Env, from: Address, spender: Address, amount: i128) {
         // Check if paused
         Self::require_not_paused(&env);
-        
+
         // Check blacklist
         Self::require_not_blacklisted(&env, &from);
-        
+
         // Validate parameters
         Self::require_non_negative_amount(&env, amount);
-        
+
         // Set authorization validity period
         let live_until_ledger = env.ledger().sequence() + LEDGER_THRESHOLD_USER;
-        
+
         // Use OpenZeppelin FungibleToken approve
         stellar_fungible::approve(&env, &from, &spender, amount, live_until_ledger);
 
         // Publish approval event
         env.events().publish(
-            (Symbol::new(&env,"approve"),),
-            (from, spender, amount, live_until_ledger)
+            (Symbol::new(&env, "approve"),),
+            (from, spender, amount, live_until_ledger),
         );
     }
-    
+
     fn allowance(env: Env, from: Address, spender: Address) -> i128 {
         stellar_fungible::allowance(&env, &from, &spender)
     }
-    
+
     fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
         // Check if paused
         Self::require_not_paused(&env);
-        
+
         // Check blacklist (including spender)
         Self::require_not_blacklisted(&env, &spender);
         Self::require_not_blacklisted(&env, &from);
         Self::require_not_blacklisted(&env, &to);
-        
+
         // Validate parameters
         Self::require_positive_amount(&env, amount);
-        
+
         // Use the passed spender parameter, don't force using contract address
         // Use OpenZeppelin FungibleToken proxy transfer
         stellar_fungible::transfer_from(&env, &spender, &from, &to, amount);
 
         // Publish proxy transfer event
         env.events().publish(
-            (Symbol::new(&env,"transfer_from"),),
-            (spender, from, to, amount)
+            (Symbol::new(&env, "transfer_from"),),
+            (spender, from, to, amount),
         );
     }
-    
+
     fn is_initialized(env: Env) -> bool {
         Self::is_initialized_internal(&env)
     }
@@ -240,7 +240,7 @@ impl MintableToken for FungibleToken {
     fn mint(env: Env, to: Address, amount: i128) {
         // Check if paused
         Self::require_not_paused(&env);
-        
+
         // Validate parameters
         Self::require_positive_amount(&env, amount);
         // Verify minting authorization
@@ -250,10 +250,8 @@ impl MintableToken for FungibleToken {
         stellar_fungible::mintable::mint(&env, &to, amount);
 
         // Publish minting event
-        env.events().publish(
-            (Symbol::new(&env,"mint"),),
-            (minter, to, amount)
-        );
+        env.events()
+            .publish((Symbol::new(&env, "mint"),), (minter, to, amount));
     }
 }
 
@@ -264,7 +262,7 @@ impl BurnableToken for FungibleToken {
     fn burn(env: Env, amount: i128) {
         // Check if paused
         Self::require_not_paused(&env);
-        
+
         // Validate parameters
         Self::require_positive_amount(&env, amount);
 
@@ -274,10 +272,8 @@ impl BurnableToken for FungibleToken {
         stellar_fungible::burnable::burn(&env, &minter, amount);
 
         // Publish burning event
-        env.events().publish(
-            (Symbol::new(&env,"burn"),),
-            (minter, amount)
-        );
+        env.events()
+            .publish((Symbol::new(&env, "burn"),), (minter, amount));
     }
 }
 
@@ -287,30 +283,24 @@ impl BurnableToken for FungibleToken {
 impl PausableToken for FungibleToken {
     fn pause(env: Env) {
         let admin = Self::require_admin_address(&env);
-        
+
         // Use OpenZeppelin pause function
         stellar_pausable::pause(&env, &admin);
 
         // Publish pause event
-        env.events().publish(
-            (Symbol::new(&env,"pause"),),
-            admin
-        );
+        env.events().publish((Symbol::new(&env, "pause"),), admin);
     }
-    
+
     fn unpause(env: Env) {
         let admin = Self::require_admin_address(&env);
-        
+
         // Use OpenZeppelin unpause function
         stellar_pausable::unpause(&env, &admin);
 
         // Publish unpause event
-        env.events().publish(
-            (Symbol::new(&env,"unpause"),),
-            admin
-        );
+        env.events().publish((Symbol::new(&env, "unpause"),), admin);
     }
-    
+
     fn is_paused(env: Env) -> bool {
         stellar_pausable::paused(&env)
     }
@@ -322,30 +312,26 @@ impl PausableToken for FungibleToken {
 impl BlacklistTrait for FungibleToken {
     fn add_to_blacklist(env: Env, address: Address) {
         let admin = Self::require_admin(&env);
-        
+
         // Add to blacklist
         Self::add_blacklist(&env, &address);
-        
+
         // Publish blacklist addition event
-        env.events().publish(
-            (Symbol::new(&env,"blacklist_add"),),
-            (admin, address)
-        );
+        env.events()
+            .publish((Symbol::new(&env, "blacklist_add"),), (admin, address));
     }
-    
+
     fn remove_from_blacklist(env: Env, address: Address) {
         let admin = Self::require_admin(&env);
-        
+
         // Remove from blacklist
         Self::remove_blacklist(&env, &address);
-        
+
         // Publish blacklist removal event
-        env.events().publish(
-            (Symbol::new(&env,"blacklist_remove"),),
-            (admin, address)
-        );
+        env.events()
+            .publish((Symbol::new(&env, "blacklist_remove"),), (admin, address));
     }
-    
+
     fn is_blacklisted(env: Env, address: Address) -> bool {
         Self::is_blacklist(&env, &address)
     }
@@ -358,26 +344,28 @@ impl AdminTrait for FungibleToken {
     fn admin(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::Admin)
     }
-    
+
     fn transfer_admin(env: Env, new_admin: Address) {
         let current_admin = Self::require_admin(&env);
         env.storage().instance().set(&DataKey::Admin, &new_admin);
-        
+
         // Publish admin transfer event
         env.events().publish(
-            (Symbol::new(&env,"admin_transfer"),),
-            (current_admin, new_admin)
+            (Symbol::new(&env, "admin_transfer"),),
+            (current_admin, new_admin),
         );
     }
 
     fn transfer_mint_authorization(env: Env, new_mint_authorization: Address) {
         let current_admin = Self::require_admin(&env);
-        env.storage().instance().set(&DataKey::MintAuthorization, &new_mint_authorization);
-        
+        env.storage()
+            .instance()
+            .set(&DataKey::MintAuthorization, &new_mint_authorization);
+
         // Publish mint authorization transfer event
         env.events().publish(
-            (Symbol::new(&env,"mint_authorization_transfer"),),
-            (current_admin, new_mint_authorization)
+            (Symbol::new(&env, "mint_authorization_transfer"),),
+            (current_admin, new_mint_authorization),
         );
     }
 
@@ -390,7 +378,9 @@ impl AdminTrait for FungibleToken {
 
 impl InternalHelperTrait for FungibleToken {
     fn require_admin(env: &Env) -> Address {
-        let admin: Address = env.storage().instance()
+        let admin: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(env, TokenError::Unauthorized));
         admin.require_auth();
@@ -398,7 +388,8 @@ impl InternalHelperTrait for FungibleToken {
     }
 
     fn require_admin_address(env: &Env) -> Address {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(env, TokenError::Unauthorized))
     }
@@ -420,7 +411,7 @@ impl InternalHelperTrait for FungibleToken {
             panic_with_error!(env, TokenError::InvalidAmount);
         }
     }
-    
+
     fn require_not_blacklisted(env: &Env, address: &Address) {
         if Self::is_blacklist(env, address) {
             panic_with_error!(env, TokenError::AddressBlacklisted);
@@ -428,7 +419,9 @@ impl InternalHelperTrait for FungibleToken {
     }
 
     fn require_mint_authorization(env: &Env) -> Address {
-        let mint_authorization: Address = env.storage().instance()
+        let mint_authorization: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::MintAuthorization)
             .unwrap_or_else(|| panic_with_error!(env, TokenError::Unauthorized));
         mint_authorization.require_auth();
@@ -436,7 +429,9 @@ impl InternalHelperTrait for FungibleToken {
     }
 
     fn require_burn_authorization(env: &Env) -> Address {
-        let burn_authorization: Address = env.storage().instance()
+        let burn_authorization: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::MintAuthorization)
             .unwrap_or_else(|| panic_with_error!(env, TokenError::Unauthorized));
         burn_authorization
@@ -448,12 +443,16 @@ impl InternalHelperTrait for FungibleToken {
 impl FungibleToken {
     // Check if contract is initialized
     fn is_initialized_internal(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Initialized).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Initialized)
+            .unwrap_or(false)
     }
-    
+
     // Get token metadata
     fn get_metadata(env: &Env) -> TokenMetadata {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&DataKey::Metadata)
             .unwrap_or(TokenMetadata {
                 name: String::from_str(env, "Unknown"),
@@ -461,20 +460,25 @@ impl FungibleToken {
                 decimals: 18,
             })
     }
-    
+
     // Add address to blacklist
     fn add_blacklist(env: &Env, address: &Address) {
-        env.storage().instance().set(&BlacklistDataKey::BlackListAddress(address.clone()), &true);
+        env.storage()
+            .instance()
+            .set(&BlacklistDataKey::BlackListAddress(address.clone()), &true);
     }
-    
+
     // Remove address from blacklist
     fn remove_blacklist(env: &Env, address: &Address) {
-        env.storage().instance().remove(&BlacklistDataKey::BlackListAddress(address.clone()));
+        env.storage()
+            .instance()
+            .remove(&BlacklistDataKey::BlackListAddress(address.clone()));
     }
-    
+
     // Check if address is blacklisted
     fn is_blacklist(env: &Env, address: &Address) -> bool {
-        env.storage().instance()
+        env.storage()
+            .instance()
             .get(&BlacklistDataKey::BlackListAddress(address.clone()))
             .unwrap_or(false)
     }

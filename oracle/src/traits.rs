@@ -4,13 +4,19 @@ use soroban_sdk::{Address, Env};
 /// Responsible for contract initialization and state checking
 pub trait OracleInitialization {
     /// Initialize Oracle contract
-    /// 
+    ///
     /// # Parameters
     /// - `admin`: Admin address
     /// - `nav_decimals`: NAV decimal places
     /// - `initial_nav`: Initial NAV value
     /// - `max_change_bps`: Maximum NAV change in basis points (10000 = 100%)
-    fn initialize(env: Env, admin: Address, nav_decimals: u32, initial_nav: i128, max_change_bps: u32);
+    fn initialize(
+        env: Env,
+        admin: Address,
+        nav_decimals: u32,
+        initial_nav: i128,
+        max_change_bps: u32,
+    );
 
     /// Check if contract is initialized
     fn is_initialized(env: Env) -> bool;
@@ -65,26 +71,11 @@ pub trait OracleEvents {
     );
 
     /// Emit NAV manager set event
-    fn emit_nav_manager_set_event(
-        env: Env,
-        admin: Address,
-        nav_manager: Address,
-    );
+    fn emit_nav_manager_set_event(env: Env, admin: Address, nav_manager: Address);
 
     /// Emit max change percent updated event
-    fn emit_max_change_updated_event(
-        env: Env,
-        admin: Address,
-        max_change_percent: u32,
-    );
+    fn emit_max_change_updated_event(env: Env, admin: Address, max_change_percent: u32);
 
     /// Emit NAV value updated event
-    fn emit_nav_updated_event(
-        env: Env,
-        nav_manager: Address,
-        old_nav: i128,
-        new_nav: i128,
-    );
+    fn emit_nav_updated_event(env: Env, nav_manager: Address, old_nav: i128, new_nav: i128);
 }
-
-

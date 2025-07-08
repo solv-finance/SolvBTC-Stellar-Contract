@@ -5,16 +5,12 @@ mod test;
 mod traits;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, contractmeta,
-    panic_with_error, Address, Env, symbol_short, log,
+    contract, contracterror, contractimpl, contractmeta, contracttype, log, panic_with_error,
+    symbol_short, Address, Env,
 };
 
 pub use traits::{
-    OracleInitialization,
-    NavQuery,
-    AdminManagement,
-    NavManagerManagement,
-    OracleEvents,
+    AdminManagement, NavManagerManagement, NavQuery, OracleEvents, OracleInitialization,
 };
 
 // ==================== Constants Definition ====================
@@ -107,15 +103,19 @@ impl OracleInitialization for SolvBtcOracle {
 
         // Set initial data
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::NavDecimals, &nav_decimals);
+        env.storage()
+            .instance()
+            .set(&DataKey::NavDecimals, &nav_decimals);
         env.storage().instance().set(&DataKey::Nav, &initial_nav);
-        env.storage().instance().set(&DataKey::MaxNavChangePercent, &max_change_percent);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxNavChangePercent, &max_change_percent);
         env.storage().instance().set(&DataKey::Initialized, &true);
 
         // Publish initialization event
         env.events().publish(
             (symbol_short!("init"),),
-            (admin.clone(), initial_nav, nav_decimals, max_change_percent)
+            (admin.clone(), initial_nav, nav_decimals, max_change_percent),
         );
     }
 
@@ -142,7 +142,10 @@ impl NavQuery for SolvBtcOracle {
     /// Get maximum NAV change percentage
     fn max_nav_change_percent(env: Env) -> u32 {
         Self::require_initialized(&env);
-        env.storage().instance().get(&DataKey::MaxNavChangePercent).unwrap()
+        env.storage()
+            .instance()
+            .get(&DataKey::MaxNavChangePercent)
+            .unwrap()
     }
 }
 
@@ -157,13 +160,15 @@ impl AdminManagement for SolvBtcOracle {
     /// Set NAV manager (admin only)
     fn set_nav_manager_by_admin(env: Env, manager_address: Address) {
         Self::require_admin(&env);
-        
-        env.storage().instance().set(&DataKey::NavManager, &manager_address);
+
+        env.storage()
+            .instance()
+            .set(&DataKey::NavManager, &manager_address);
 
         // Publish event
         env.events().publish(
             (symbol_short!("nav_mgr"),),
-            (Self::get_admin(&env), manager_address.clone())
+            (Self::get_admin(&env), manager_address.clone()),
         );
     }
 
@@ -175,12 +180,14 @@ impl AdminManagement for SolvBtcOracle {
             panic_with_error!(&env, OracleError::InvalidArgument);
         }
 
-        env.storage().instance().set(&DataKey::MaxNavChangePercent, &max_change_percent);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxNavChangePercent, &max_change_percent);
 
         // Publish event
         env.events().publish(
             (symbol_short!("max_chg"),),
-            (Self::get_admin(&env), max_change_percent)
+            (Self::get_admin(&env), max_change_percent),
         );
     }
 }
@@ -204,7 +211,11 @@ impl NavManagerManagement for SolvBtcOracle {
         }
 
         let current_nav: i128 = env.storage().instance().get(&DataKey::Nav).unwrap();
-        let max_change_percent: u32 = env.storage().instance().get(&DataKey::MaxNavChangePercent).unwrap();
+        let max_change_percent: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxNavChangePercent)
+            .unwrap();
 
         // Calculate percentage change based on precision
         let nav_decimals: u32 = env.storage().instance().get(&DataKey::NavDecimals).unwrap();
@@ -217,7 +228,7 @@ impl NavManagerManagement for SolvBtcOracle {
         // Publish event
         env.events().publish(
             (symbol_short!("nav_set"),),
-            (Self::get_nav_manager(&env), current_nav, nav)
+            (Self::get_nav_manager(&env), current_nav, nav),
         );
     }
 }
@@ -236,48 +247,34 @@ impl OracleEvents for SolvBtcOracle {
     ) {
         env.events().publish(
             (symbol_short!("init"),),
-            (admin.clone(), initial_nav, nav_decimals, max_change_percent)
+            (admin.clone(), initial_nav, nav_decimals, max_change_percent),
         );
     }
 
     /// Publish NAV manager set event   
-    fn emit_nav_manager_set_event(
-        env: Env,
-        admin: Address,
-        nav_manager: Address,
-    ) {
+    fn emit_nav_manager_set_event(env: Env, admin: Address, nav_manager: Address) {
         env.events().publish(
             (symbol_short!("nav_mgr"),),
-            (admin.clone(), nav_manager.clone())
+            (admin.clone(), nav_manager.clone()),
         );
     }
 
     /// Publish maximum change percentage update event
-    fn emit_max_change_updated_event(
-        env: Env,
-        admin: Address,
-        max_change_percent: u32,
-    ) {
+    fn emit_max_change_updated_event(env: Env, admin: Address, max_change_percent: u32) {
         env.events().publish(
             (symbol_short!("max_chg"),),
-            (admin.clone(), max_change_percent)
+            (admin.clone(), max_change_percent),
         );
     }
 
     /// Publish NAV value update event
-    fn emit_nav_updated_event(
-        env: Env,
-        nav_manager: Address,
-        old_nav: i128,
-        new_nav: i128,
-    ) {
+    fn emit_nav_updated_event(env: Env, nav_manager: Address, old_nav: i128, new_nav: i128) {
         env.events().publish(
             (symbol_short!("nav_set"),),
-            (nav_manager.clone(), old_nav, new_nav)
+            (nav_manager.clone(), old_nav, new_nav),
         );
     }
 }
-
 
 // ==================== Internal Helper Functions ====================
 
@@ -327,7 +324,13 @@ impl SolvBtcOracle {
     }
 
     /// Validate if NAV change is within allowed range based on precision (internal function)
-    fn check_nav_change(env: &Env, current_nav: i128, new_nav: i128, max_change_percent: u32, nav_decimals: u32) {
+    fn check_nav_change(
+        env: &Env,
+        current_nav: i128,
+        new_nav: i128,
+        max_change_percent: u32,
+        nav_decimals: u32,
+    ) {
         if max_change_percent == 0 {
             // If maximum change percentage is 0, no change is allowed
             if current_nav != new_nav {
@@ -350,4 +353,4 @@ impl SolvBtcOracle {
             panic_with_error!(env, OracleError::NavChangeExceedsLimit);
         }
     }
-} 
+}

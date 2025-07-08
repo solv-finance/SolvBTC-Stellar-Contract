@@ -1,0 +1,11 @@
+# 忽略所有 target 目录
+**/target/
+
+# 忽略所有 test_snapshots 目录
+**/test_snapshots/
+
+# 忽略子项目中的 Cargo.lock 文件
+*/Cargo.lock
+
+# 忽略 Mac OS 系统文件
+.DS_Store 

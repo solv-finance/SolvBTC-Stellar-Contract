@@ -1,6 +1,4 @@
-use soroban_sdk::{
-    Address, Env, Vec, Map,
-};
+use soroban_sdk::{Address, Env, Map, Vec};
 
 // ==================== Trait Definitions ====================
 
@@ -38,7 +36,7 @@ pub trait QueryTrait {
 /// Minter Manager Interface
 pub trait MinterManagerInterface {
     /// Initialize the contract
-    /// 
+    ///
     /// # Parameters
     /// - `admin`: Admin address
     /// - `token_contract`: Token contract address
@@ -68,4 +66,3 @@ pub trait MinterManagerInterface {
     /// Get admin address
     fn admin(env: Env) -> Address;
 }
-
