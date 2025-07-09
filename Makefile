@@ -1,8 +1,10 @@
 default: build
 
+# 运行所有测试
 test: build
 	cargo test --all --tests
 
+# 构建所有合约
 build:
 	cargo build
 	cargo rustc --manifest-path=fungible-token/Cargo.toml --crate-type=cdylib --target=wasm32-unknown-unknown --release
@@ -27,6 +29,24 @@ build:
 			ls -l "$$i"; \
 		done
 
+# 只运行集成测试
+integration-test: build
+	cargo test -p tests
+
+# 检查代码格式和问题
+check:
+	cargo fmt --all -- --check
+	cargo clippy --all-targets -- -D warnings
+
+# 修复代码格式和简单问题
+fix:
+	cargo fmt --all
+	cargo clippy --all-targets --fix -- -D warnings
+
+# 生成文档
+doc:
+	cargo doc --no-deps --document-private-items --open
+
 fmt:
 	cargo fmt --all
 
@@ -49,4 +69,6 @@ generate-js:
 	soroban contract bindings typescript --overwrite \
 		--contract-id CBWH54OKUK6U2J2A4J2REJEYB625NEFCHISWXLOPR2D2D6FTN63TJTWN \
 		--wasm ./target/wasm32-unknown-unknown/optimized/minter_manager.wasm --output-dir ./js/js-minter-manager/ \
-		--rpc-url http://localhost:8000 --network-passphrase "Standalone Network ; February 2017" --network Standalone 
+		--rpc-url http://localhost:8000 --network-passphrase "Standalone Network ; February 2017" --network Standalone
+
+.PHONY: default test build integration-test check fix doc fmt clean generate-js 

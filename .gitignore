@@ -1,11 +1,40 @@
-# 忽略所有 target 目录
+# Rust 编译产物
+/target/
 **/target/
+Cargo.lock
+
+# 编辑器和 IDE 文件
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 环境变量和密钥
+.env
+.env.local
+*.pem
+*.key
+
+# 日志文件
+*.log
+
+# WASM 相关
+*.wasm
+!target/wasm32-unknown-unknown/optimized/*.wasm
+
+# 临时文件
+*.tmp
+*.bak
+
+# 其他
+node_modules/
+js/*/dist/
+js/*/node_modules/
 
 # 忽略所有 test_snapshots 目录
-**/test_snapshots/
-
-# 忽略子项目中的 Cargo.lock 文件
-*/Cargo.lock
-
-# 忽略 Mac OS 系统文件
-.DS_Store 
+**/test_snapshots/ 

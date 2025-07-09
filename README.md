@@ -1,6 +1,78 @@
 # SolvBTC Stellar Contracts
 
-This repository contains the smart contracts for the SolvBTC platform built on Stellar Soroban.
+这个项目包含了 SolvBTC 在 Stellar Soroban 平台上的智能合约实现。
+
+## 项目结构
+
+- `fungible-token/`: 可替代代币合约
+- `minter-manager/`: 铸币管理合约
+- `oracle/`: 价格预言机合约
+- `vault/`: 金库合约
+- `tests/`: 集成测试
+
+## 开发环境设置
+
+### 前置条件
+
+- Rust 1.74.0 或更高版本
+- Soroban CLI
+- wasm32-unknown-unknown 目标
+
+### 安装依赖
+
+```bash
+# 安装 Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup default stable
+rustup target add wasm32-unknown-unknown
+
+# 安装 Soroban CLI
+cargo install --locked soroban-cli
+```
+
+## 构建和测试
+
+### 构建所有合约
+
+```bash
+make build
+```
+
+### 运行所有测试
+
+```bash
+make test
+```
+
+### 只运行集成测试
+
+```bash
+make integration-test
+```
+
+### 代码质量检查
+
+```bash
+make check
+```
+
+### 自动修复代码问题
+
+```bash
+make fix
+```
+
+## 部署
+
+### 生成 TypeScript 绑定
+
+```bash
+make generate-js
+```
+
+## 许可证
+
+[添加许可证信息]
 
 ## Project Structure
 

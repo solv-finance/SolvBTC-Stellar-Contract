@@ -7,8 +7,15 @@ description = "OpenZeppelin-based FungibleToken Interface for Stellar Soroban"
 license = "MIT"
 repository = "https://github.com/your-username/fungible-token"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[features]
+testutils = ["soroban-sdk/testutils"]
+
 [dependencies]
-soroban-sdk = "22.0.0"
+soroban-sdk = { workspace = true }
 stellar-fungible = { git = "https://github.com/OpenZeppelin/stellar-contracts", tag = "v0.2.0" }
 stellar-pausable = { git = "https://github.com/OpenZeppelin/stellar-contracts", tag = "v0.2.0" }
 stellar-pausable-macros = { git = "https://github.com/OpenZeppelin/stellar-contracts", tag = "v0.2.0" }
@@ -16,21 +23,4 @@ stellar-constants = { git = "https://github.com/OpenZeppelin/stellar-contracts",
 stellar-event-assertion = { git = "https://github.com/OpenZeppelin/stellar-contracts", tag = "v0.2.0" }
 
 [dev-dependencies]
-soroban-sdk = { version = "22.0.0", features = ["testutils"] }
-
-[lib]
-crate-type = ["cdylib"]
-
-[profile.release]
-opt-level = "z"
-overflow-checks = true
-debug = 0
-strip = "symbols"
-debug-assertions = false
-panic = "abort"
-codegen-units = 1
-lto = true
-
-[profile.release-with-logs]
-inherits = "release"
-debug-assertions = true
+soroban-sdk = { workspace = true, features = ["testutils"] }
