@@ -1,9 +1,9 @@
+use crate::traits::{
+    AdminTrait, InitializableTrait, MinterManagementTrait, QueryTrait, TokenOperationsTrait,
+};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal,
     Map, Symbol, Vec,
-};
-use crate::traits::{
-    AdminTrait, InitializableTrait, MinterManagementTrait, QueryTrait, TokenOperationsTrait,
 };
 const MAX_MINTERS: u32 = 10;
 // ==================== Error Definitions ====================
@@ -53,6 +53,8 @@ pub struct MinterManager;
 #[contractimpl]
 impl InitializableTrait for MinterManager {
     fn initialize(env: Env, admin: Address, token_contract: Address) {
+        // Verify admin permissions
+        admin.require_auth();
         // Check if already initialized
         if Self::is_initialized_internal(&env) {
             panic_with_error!(&env, MinterManagerError::AlreadyInitialized);
@@ -180,7 +182,8 @@ impl MinterManagementTrait for MinterManager {
 
 #[contractimpl]
 impl TokenOperationsTrait for MinterManager {
-    fn mint(env: Env, from: Address, token_contract: Address, to: Address, amount: i128) {
+    fn mint(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
         // Validate parameters
         if amount <= 0 {
             panic_with_error!(&env, MinterManagerError::InvalidArgument);
@@ -190,7 +193,7 @@ impl TokenOperationsTrait for MinterManager {
         Self::require_minter(&env, &from);
 
         // Get token contract address
-        // let token_contract = Self::get_token_contract(&env);
+        let token_contract = Self::get_token_contract(&env);
 
         // Call token contract's mint function
         let token_client = FungibleTokenClient::new(&env, &token_contract);
@@ -201,7 +204,8 @@ impl TokenOperationsTrait for MinterManager {
             .publish((Symbol::new(&env, "mint"),), (from, to, amount));
     }
 
-    fn burn(env: Env, from: Address, token_contract: Address, amount: i128) {
+    fn burn(env: Env, from: Address, amount: i128) {
+        from.require_auth();
         // Validate parameters
         if amount <= 0 {
             panic_with_error!(&env, MinterManagerError::InvalidArgument);
@@ -211,7 +215,7 @@ impl TokenOperationsTrait for MinterManager {
         Self::require_minter(&env, &from);
 
         // Get token contract address
-        // let token_contract = Self::get_token_contract(&env);
+        let token_contract = Self::get_token_contract(&env);
 
         // Call token contract's burn function
         let token_client = FungibleTokenClient::new(&env, &token_contract);

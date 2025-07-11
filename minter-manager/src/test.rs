@@ -235,7 +235,7 @@ mod tests {
         client.add_minter_by_admin(&minter);
 
         // Try minting invalid amount (0 or negative)
-        client.mint(&minter, &token_contract, &recipient, &0_i128);
+        client.mint(&minter, &recipient, &0_i128);
     }
 
     #[test]

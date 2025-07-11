@@ -95,6 +95,8 @@ impl TokenInterface for FungibleToken {
         decimals: u32,
         mint_authorization: Address,
     ) {
+        // Verify admin permissions
+        admin.require_auth();
         // Check if already initialized
         if Self::is_initialized_internal(&env) {
             panic_with_error!(env, TokenError::AlreadyInitialized);
@@ -104,9 +106,6 @@ impl TokenInterface for FungibleToken {
         if decimals > 18 {
             panic_with_error!(env, TokenError::InvalidArgument);
         }
-
-        // Verify admin permissions
-        admin.require_auth();
 
         // Set contract admin
         env.storage().instance().set(&DataKey::Admin, &admin);

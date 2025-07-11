@@ -1,10 +1,10 @@
 default: build
 
-# 运行所有测试
+# Run all tests
 test: build
 	cargo test --all --tests
 
-# 构建所有合约
+# Build all contracts
 build:
 	cargo build
 	cargo rustc --manifest-path=fungible-token/Cargo.toml --crate-type=cdylib --target=wasm32-unknown-unknown --release
@@ -29,21 +29,21 @@ build:
 			ls -l "$$i"; \
 		done
 
-# 只运行集成测试
+# Run integration tests only
 integration-test: build
 	cargo test -p tests
 
-# 检查代码格式和问题
+# Check code format and issues
 check:
 	cargo fmt --all -- --check
 	cargo clippy --all-targets -- -D warnings
 
-# 修复代码格式和简单问题
+# Fix code format and simple issues
 fix:
 	cargo fmt --all
 	cargo clippy --all-targets --fix -- -D warnings
 
-# 生成文档
+# Generate documentation
 doc:
 	cargo doc --no-deps --document-private-items --open
 
@@ -55,19 +55,19 @@ clean:
 
 generate-js:
 	soroban contract bindings typescript --overwrite \
-		--contract-id CBWH54OKUK6U2J2A4J2REJEYB625NEFCHISWXLOPR2D2D6FTN63TJTWN \
+		--contract-id CAPQXPPAIUDIJRRDXLUAIY4QRG5QCJN2B5SFGQOGB6GPBSXKK6GX2ZKQ \
 		--wasm ./target/wasm32-unknown-unknown/optimized/fungible_token.wasm --output-dir ./js/js-fungible-token/ \
 		--rpc-url http://localhost:8000 --network-passphrase "Standalone Network ; February 2017" --network Standalone
 	soroban contract bindings typescript --overwrite \
-		--contract-id CBWH54OKUK6U2J2A4J2REJEYB625NEFCHISWXLOPR2D2D6FTN63TJTWN \
+		--contract-id CB22PCIBZJQMEO7KLV4WUWDG7N6BRQ6QN3ALYGOUYO3ZPLVC2CS5V46K \
 		--wasm ./target/wasm32-unknown-unknown/optimized/solvbtc_vault.wasm --output-dir ./js/js-vault/ \
 		--rpc-url http://localhost:8000 --network-passphrase "Standalone Network ; February 2017" --network Standalone
 	soroban contract bindings typescript --overwrite \
-		--contract-id CBWH54OKUK6U2J2A4J2REJEYB625NEFCHISWXLOPR2D2D6FTN63TJTWN \
+		--contract-id CBMKIQH4PJ6LN7DVG2G7TJLGPJUDOWGIH2UY5ULOGDAHKBSWMOXC3FMM \
 		--wasm ./target/wasm32-unknown-unknown/optimized/solvbtc_oracle.wasm --output-dir ./js/js-oracle/ \
 		--rpc-url http://localhost:8000 --network-passphrase "Standalone Network ; February 2017" --network Standalone
 	soroban contract bindings typescript --overwrite \
-		--contract-id CBWH54OKUK6U2J2A4J2REJEYB625NEFCHISWXLOPR2D2D6FTN63TJTWN \
+		--contract-id CDRQZFAHFFYYVHRAQE7M4LNR2UZUZNVOEA4T2QQP4MYOXEN5GEIIXIWI \
 		--wasm ./target/wasm32-unknown-unknown/optimized/minter_manager.wasm --output-dir ./js/js-minter-manager/ \
 		--rpc-url http://localhost:8000 --network-passphrase "Standalone Network ; February 2017" --network Standalone
 

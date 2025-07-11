@@ -2,7 +2,7 @@
 
 mod fungible_token;
 mod test;
-mod traits; 
+mod traits;
 
 pub use fungible_token::*;
-pub use traits::*; 
+pub use traits::*;

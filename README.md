@@ -1,78 +1,74 @@
 # SolvBTC Stellar Contracts
 
-这个项目包含了 SolvBTC 在 Stellar Soroban 平台上的智能合约实现。
+This project contains the implementation of SolvBTC smart contracts on the Stellar Soroban platform.
 
-## 项目结构
+## Project Structure
 
-- `fungible-token/`: 可替代代币合约
-- `minter-manager/`: 铸币管理合约
-- `oracle/`: 价格预言机合约
-- `vault/`: 金库合约
-- `tests/`: 集成测试
+- `fungible-token/`: Fungible token contract
+- `minter-manager/`: Minter management contract
+- `oracle/`: Price oracle contract
+- `vault/`: Vault contract
+- `tests/`: Integration tests
 
-## 开发环境设置
+## Development Environment Setup
 
-### 前置条件
+### Prerequisites
 
-- Rust 1.74.0 或更高版本
+- Rust 1.74.0 or higher
 - Soroban CLI
-- wasm32-unknown-unknown 目标
+- wasm32-unknown-unknown target
 
-### 安装依赖
+### Installing Dependencies
 
 ```bash
-# 安装 Rust
+# Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup default stable
 rustup target add wasm32-unknown-unknown
 
-# 安装 Soroban CLI
+# Install Soroban CLI
 cargo install --locked soroban-cli
 ```
 
-## 构建和测试
+## Building and Testing
 
-### 构建所有合约
+### Build All Contracts
 
 ```bash
 make build
 ```
 
-### 运行所有测试
+### Run All Tests
 
 ```bash
 make test
 ```
 
-### 只运行集成测试
+### Run Integration Tests Only
 
 ```bash
 make integration-test
 ```
 
-### 代码质量检查
+### Code Quality Check
 
 ```bash
 make check
 ```
 
-### 自动修复代码问题
+### Automatically Fix Code Issues
 
 ```bash
 make fix
 ```
 
-## 部署
+## Deployment
 
-### 生成 TypeScript 绑定
+### Generate TypeScript Bindings
 
 ```bash
 make generate-js
 ```
-
-## 许可证
-
-[添加许可证信息]
 
 ## Project Structure
 

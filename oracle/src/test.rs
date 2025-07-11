@@ -25,10 +25,10 @@ fn test_initialize_success() {
     let admin = Address::generate(&env);
     let (client, _) = create_oracle_contract(&env);
 
-    // 成功初始化
+    // Successfully initialize
     client.initialize(&admin, &8, &1000000000, &500); // 8 decimal places, initial NAV=10, max change 5%
 
-    // 验证初始化状态
+    // Verify initialization state
     assert!(client.is_initialized());
     assert_eq!(client.admin(), admin);
     assert_eq!(client.get_nav(), 1000000000);

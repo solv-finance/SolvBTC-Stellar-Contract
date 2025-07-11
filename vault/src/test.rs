@@ -57,8 +57,8 @@ fn test_eip712_domain_separator_generation() {
     let (client, _) = create_vault_contract(&env);
 
     // Initialize contract
-    let domain_name = soroban_sdk::String::from_str(&env, "withdraw");
-    let domain_version = soroban_sdk::String::from_str(&env, "1");
+    let domain_name = String::from_str(&env, "withdraw");
+    let domain_version = String::from_str(&env, "1");
     client.initialize(
         &admin,
         &minter_manager,
@@ -76,7 +76,6 @@ fn test_eip712_domain_separator_generation() {
     let domain_version = client.get_eip712_domain_version();
     let chain_id = client.get_eip712_chain_id();
     let domain_separator = client.get_eip712_domain_separator();
-    log!(&env, "domain_separator: {:?}", domain_separator);
 
     // Verify return values are not empty
     assert!(domain_name.len() > 0);
@@ -100,8 +99,8 @@ fn test_eip712_domain_management() {
     let (client, _) = create_vault_contract(&env);
 
     // Initialize contract
-    let domain_name = soroban_sdk::String::from_str(&env, "withdraw");
-    let domain_version = soroban_sdk::String::from_str(&env, "1");
+    let domain_name = String::from_str(&env, "withdraw");
+    let domain_version = String::from_str(&env, "1");
     client.initialize(
         &admin,
         &minter_manager,
@@ -120,8 +119,8 @@ fn test_eip712_domain_management() {
     let initial_separator = client.get_eip712_domain_separator();
 
     // Update EIP712 domain parameters
-    let new_name = soroban_sdk::String::from_str(&env, "Updated withdraw");
-    let new_version = soroban_sdk::String::from_str(&env, "2.0");
+    let new_name = String::from_str(&env, "Updated withdraw");
+    let new_version = String::from_str(&env, "2.0");
     client.set_eip712_domain_by_admin(&new_name, &new_version);
 
     // Verify parameters have been updated
@@ -151,8 +150,8 @@ fn test_withdraw_verifier_key_management() {
     let (client, _) = create_vault_contract(&env);
 
     // Initialize contract
-    let domain_name = soroban_sdk::String::from_str(&env, "withdraw");
-    let domain_version = soroban_sdk::String::from_str(&env, "1");
+    let domain_name = String::from_str(&env, "withdraw");
+    let domain_version = String::from_str(&env, "1");
     client.initialize(
         &admin,
         &minter_manager,
@@ -195,8 +194,8 @@ fn test_withdraw_invalid_signature_length() {
     let (client, _) = create_vault_contract(&env);
 
     // Initialize contract
-    let domain_name = soroban_sdk::String::from_str(&env, "withdraw");
-    let domain_version = soroban_sdk::String::from_str(&env, "1");
+    let domain_name = String::from_str(&env, "withdraw");
+    let domain_version = String::from_str(&env, "1");
     client.initialize(
         &admin,
         &minter_manager,
@@ -245,8 +244,8 @@ fn test_eip712_message_construction() {
     let (client, _) = create_vault_contract(&env);
 
     // Initialize contract
-    let domain_name = soroban_sdk::String::from_str(&env, "withdraw");
-    let domain_version = soroban_sdk::String::from_str(&env, "1");
+    let domain_name = String::from_str(&env, "withdraw");
+    let domain_version = String::from_str(&env, "1");
     client.initialize(
         &admin,
         &minter_manager,
@@ -281,8 +280,8 @@ fn test_basic_initialize_success() {
     let (client, _) = create_vault_contract(&env);
 
     // Initialize contract
-    let domain_name = soroban_sdk::String::from_str(&env, "withdraw");
-    let domain_version = soroban_sdk::String::from_str(&env, "1");
+    let domain_name = String::from_str(&env, "withdraw");
+    let domain_version = String::from_str(&env, "1");
     client.initialize(
         &admin,
         &minter_manager,
@@ -341,8 +340,8 @@ fn test_withdraw_structure_validation() {
     let (client, _) = create_vault_contract(&env);
 
     // Initialize contract
-    let domain_name = soroban_sdk::String::from_str(&env, "withdraw");
-    let domain_version = soroban_sdk::String::from_str(&env, "1");
+    let domain_name = String::from_str(&env, "withdraw");
+    let domain_version = String::from_str(&env, "1");
     client.initialize(
         &admin,
         &minter_manager,
@@ -388,7 +387,10 @@ fn test_mock_public_key_format() {
     // Verify it's a valid Address
     assert_eq!(
         pubkey.to_string(),
-        String::from_str(&env, "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ")
+        String::from_str(
+            &env,
+            "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+        )
     );
 }
 
@@ -410,8 +412,8 @@ fn test_withdraw_with_mock_pubkey() {
     let (client, _) = create_vault_contract(&env);
 
     // Initialize contract
-    let domain_name = soroban_sdk::String::from_str(&env, "withdraw");
-    let domain_version = soroban_sdk::String::from_str(&env, "1");
+    let domain_name = String::from_str(&env, "withdraw");
+    let domain_version = String::from_str(&env, "1");
     client.initialize(
         &admin,
         &minter_manager,

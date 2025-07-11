@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contractmeta, contracttype, log, panic_with_error,
+    contract, contracterror, contractimpl, contractmeta, contracttype, panic_with_error,
     symbol_short, Address, Env,
 };
 
@@ -77,6 +77,9 @@ impl OracleInitialization for SolvBtcOracle {
         initial_nav: i128,
         max_change_percent: u32,
     ) {
+        // Verify admin permissions
+        admin.require_auth();
+
         // Check if already initialized
         if Self::check_initialized(&env) {
             panic_with_error!(&env, OracleError::AlreadyInitialized);
@@ -196,9 +199,7 @@ impl NavManagerManagement for SolvBtcOracle {
     /// Set NAV value (NAV manager only)
     fn set_nav_by_manager(env: Env, nav: i128) {
         let nav_manager: Address = Self::require_nav_manager(&env);
-        log!(&env, "nav_manager2: {:?}", nav_manager);
         nav_manager.require_auth();
-        log!(&env, "nav_decimals3: {:?}", 11131313);
 
         if nav <= 0 {
             panic_with_error!(&env, OracleError::InvalidArgument);
@@ -308,7 +309,6 @@ impl SolvBtcOracle {
         let nav_manager_opt: Option<Address> = env.storage().instance().get(&DataKey::NavManager);
         match nav_manager_opt {
             Some(nav_manager) => {
-                log!(&env, "nav_manager_opt: {:?}", nav_manager);
                 nav_manager
             }
             None => {

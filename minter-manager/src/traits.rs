@@ -24,8 +24,8 @@ pub trait MinterManagementTrait {
 
 /// Token operations trait
 pub trait TokenOperationsTrait {
-    fn mint(env: Env, caller: Address, token_contract: Address, to: Address, amount: i128);
-    fn burn(env: Env, caller: Address, token_contract: Address, amount: i128);
+    fn mint(env: Env, from: Address, to: Address, amount: i128);
+    fn burn(env: Env, from: Address, amount: i128);
 }
 
 /// Query trait

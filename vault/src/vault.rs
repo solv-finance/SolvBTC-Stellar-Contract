@@ -1,9 +1,8 @@
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, log, panic_with_error, symbol_short, vec,
-    Address, Bytes, Env, FromVal, IntoVal, Map, Symbol, Vec,
+    Address, Bytes, BytesN, Env, FromVal, IntoVal, Map, String, Symbol, Vec,
 };
-use soroban_sdk::xdr::ToXdr;
-
 
 // Signature verification uses Soroban SDK built-in functionality
 
@@ -58,11 +57,11 @@ pub enum DataKey {
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[contracttype]
 pub struct EIP712Domain {
-    pub name: soroban_sdk::String,
-    pub version: soroban_sdk::String,
-    pub chain_id: soroban_sdk::Bytes,
+    pub name: String,
+    pub version: String,
+    pub chain_id: Bytes,
     pub verifying_contract: Address,
-    pub salt: soroban_sdk::Bytes,
+    pub salt: Bytes,
 }
 
 /// Error code definition
@@ -135,16 +134,16 @@ impl VaultInitialization for SolvBTCVault {
         treasurer: Address,
         withdraw_verifier: Address,
         withdraw_ratio: i128,
-        eip712_domain_name: soroban_sdk::String,
-        eip712_domain_version: soroban_sdk::String,
+        eip712_domain_name: String,
+        eip712_domain_version: String,
     ) {
+        // Verify admin permission
+        admin.require_auth();
+
         // Check if already initialized
         if Self::is_initialized_internal(&env) {
             panic_with_error!(&env, VaultError::AlreadyInitialized);
         }
-
-        // Verify admin permission
-        admin.require_auth();
 
         // Verify fee ratio
         if withdraw_ratio < 0 || withdraw_ratio > FEE_PRECISION {
@@ -411,7 +410,7 @@ impl CurrencyManagement for SolvBTCVault {
     }
 
     fn remove_currency_by_admin(env: Env, currency: Address) {
-        let admin = Self::require_admin(&env);
+        let admin: Address = Self::require_admin(&env);
 
         // Get current currency Map
         let mut currencies: Map<Address, bool> = env
@@ -552,11 +551,7 @@ impl SystemManagement for SolvBTCVault {
         );
     }
 
-    fn set_eip712_domain_by_admin(
-        env: Env,
-        name: soroban_sdk::String,
-        version: soroban_sdk::String,
-    ) {
+    fn set_eip712_domain_by_admin(env: Env, name: String, version: String) {
         Self::require_admin(&env);
 
         // Set EIP712 domain parameter
@@ -616,27 +611,27 @@ impl VaultQuery for SolvBTCVault {
         Self::is_initialized_internal(&env)
     }
 
-    fn get_eip712_domain_name(env: Env) -> soroban_sdk::String {
+    fn get_eip712_domain_name(env: Env) -> String {
         env.storage()
             .instance()
             .get(&DataKey::EIP712DomainName)
-            .unwrap_or_else(|| soroban_sdk::String::from_str(&env, "SolvBTC Vault"))
+            .unwrap_or_else(|| String::from_str(&env, "SolvBTC Vault"))
     }
 
-    fn get_eip712_domain_version(env: Env) -> soroban_sdk::String {
+    fn get_eip712_domain_version(env: Env) -> String {
         env.storage()
             .instance()
             .get(&DataKey::EIP712DomainVersion)
-            .unwrap_or_else(|| soroban_sdk::String::from_str(&env, "1"))
+            .unwrap_or_else(|| String::from_str(&env, "1"))
     }
 
-    fn get_eip712_chain_id(env: Env) -> soroban_sdk::Bytes {
+    fn get_eip712_chain_id(env: Env) -> Bytes {
         let network_id = env.ledger().network_id(); // Return BytesN<32>
                                                     // Directly return network_id, convert to Bytes type
         network_id.into()
     }
 
-    fn get_eip712_domain_separator(env: Env) -> soroban_sdk::Bytes {
+    fn get_eip712_domain_separator(env: Env) -> Bytes {
         Self::calculate_domain_separator(&env)
     }
 }
@@ -774,8 +769,8 @@ impl SolvBTCVault {
         signature_bytes: &[u8; 64],
     ) {
         // Use Soroban SDK built-in ed25519_verify function
-        let public_key = soroban_sdk::BytesN::from_array(env, public_key_bytes);
-        let signature = soroban_sdk::BytesN::from_array(env, signature_bytes);
+        let public_key = BytesN::from_array(env, public_key_bytes);
+        let signature = BytesN::from_array(env, signature_bytes);
 
         // Call Soroban built-in ed25519 verification, if signature is invalid will panic
         env.crypto()
@@ -864,11 +859,7 @@ impl SolvBTCVault {
             .unwrap_or_else(|| panic_with_error!(env, VaultError::OracleNotSet));
 
         // Call Oracle contract's get_nav method
-        env.invoke_contract(
-            &oracle_address,
-            &Symbol::new(env, "get_nav"),
-            soroban_sdk::vec![env],
-        )
+        env.invoke_contract(&oracle_address, &Symbol::new(env, "get_nav"), vec![env])
     }
 
     /// Get NAV decimals from Oracle
@@ -883,7 +874,7 @@ impl SolvBTCVault {
         env.invoke_contract(
             &oracle_address,
             &Symbol::new(env, "get_nav_decimals"),
-            soroban_sdk::vec![env],
+            vec![env],
         )
     }
 
@@ -1003,7 +994,7 @@ impl SolvBTCVault {
         // Get NAV decimals from Oracle
         let nav_decimals = Self::get_nav_decimals_from_oracle(env);
         let precision = 10_i128.pow(nav_decimals);
-        amount * nav / precision
+        amount * precision / nav
     }
 
     /// Calculate withdrawal amount
@@ -1026,23 +1017,23 @@ impl SolvBTCVault {
     }
 
     /// Get EIP712 domain name (internal function)
-    fn get_eip712_domain_name_internal(env: &Env) -> soroban_sdk::String {
+    fn get_eip712_domain_name_internal(env: &Env) -> String {
         env.storage()
             .instance()
             .get(&DataKey::EIP712DomainName)
-            .unwrap_or_else(|| soroban_sdk::String::from_str(env, "SolvBTC Vault"))
+            .unwrap_or_else(|| String::from_str(env, "SolvBTC Vault"))
     }
 
     /// Get EIP712 domain version (internal function)
-    fn get_eip712_domain_version_internal(env: &Env) -> soroban_sdk::String {
+    fn get_eip712_domain_version_internal(env: &Env) -> String {
         env.storage()
             .instance()
             .get(&DataKey::EIP712DomainVersion)
-            .unwrap_or_else(|| soroban_sdk::String::from_str(env, "1"))
+            .unwrap_or_else(|| String::from_str(env, "1"))
     }
 
     /// Get EIP712 chain ID (internal function)
-    fn get_eip712_chain_id_internal(env: &Env) -> soroban_sdk::Bytes {
+    fn get_eip712_chain_id_internal(env: &Env) -> Bytes {
         let network_id = env.ledger().network_id(); // Return BytesN<32>
                                                     // Directly return network_id, convert to Bytes type
         network_id.into()

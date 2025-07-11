@@ -1,33 +1,26 @@
 // Vault Integration Test - Using contractimport and client approach
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use soroban_sdk::contractimport;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String};
 use stellar_strkey::ed25519::PrivateKey;
 
 // Import WASM contracts
 mod fungible_token_wasm {
-    soroban_sdk::contractimport!(
-        file = "../target/wasm32-unknown-unknown/optimized/fungible_token.wasm"
-    );
+    contractimport!(file = "../target/wasm32-unknown-unknown/optimized/fungible_token.wasm");
 }
 
 mod minter_manager_wasm {
-    soroban_sdk::contractimport!(
-        file = "../target/wasm32-unknown-unknown/optimized/minter_manager.wasm"
-    );
+    contractimport!(file = "../target/wasm32-unknown-unknown/optimized/minter_manager.wasm");
 }
 
 mod oracle_wasm {
-    soroban_sdk::contractimport!(
-        file = "../target/wasm32-unknown-unknown/optimized/solvbtc_oracle.wasm"
-    );
+    contractimport!(file = "../target/wasm32-unknown-unknown/optimized/solvbtc_oracle.wasm");
 }
 
 mod vault_wasm {
-    soroban_sdk::contractimport!(
-        file = "../target/wasm32-unknown-unknown/optimized/solvbtc_vault.wasm"
-    );
+    contractimport!(file = "../target/wasm32-unknown-unknown/optimized/solvbtc_vault.wasm");
 }
 
 // Use WASM imported client types
@@ -141,8 +134,6 @@ impl VaultTestEnv {
 
     /// Initialize all contracts
     fn initialize_contracts(&self) {
-        use soroban_sdk::String;
-
         // 1. Initialize SolvBTC token contract (minter manager has minting permission)
         self.get_solvbtc_token_client().initialize(
             &self.admin,

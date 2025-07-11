@@ -1,0 +1,23 @@
+{
+  "name": "js-client",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@stellar/stellar-sdk": "^13.3.0",
+    "soroban-client": "^1.0.1",
+    "stellar-sdk": "^13.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "description": ""
+}

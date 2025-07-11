@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, Env, Vec};
+use soroban_sdk::{contracttype, Address, Bytes, Env, String, Vec};
 
 // ==================== Deposit and Withdrawal Functions ====================
 
@@ -95,11 +95,7 @@ pub trait SystemManagement {
     fn set_withdraw_ratio_by_admin(env: Env, withdraw_ratio: i128);
 
     /// Set EIP712 domain parameters by admin
-    fn set_eip712_domain_by_admin(
-        env: Env,
-        name: soroban_sdk::String,
-        version: soroban_sdk::String,
-    );
+    fn set_eip712_domain_by_admin(env: Env, name: String, version: String);
 }
 
 // ==================== Query Functions ====================
@@ -128,16 +124,16 @@ pub trait VaultQuery {
     fn is_initialized(env: Env) -> bool;
 
     /// Get EIP712 domain name
-    fn get_eip712_domain_name(env: Env) -> soroban_sdk::String;
+    fn get_eip712_domain_name(env: Env) -> String;
 
     /// Get EIP712 domain version
-    fn get_eip712_domain_version(env: Env) -> soroban_sdk::String;
+    fn get_eip712_domain_version(env: Env) -> String;
 
     /// Get EIP712 chain ID
-    fn get_eip712_chain_id(env: Env) -> soroban_sdk::Bytes;
+    fn get_eip712_chain_id(env: Env) -> Bytes;
 
     /// Get EIP712 domain separator
-    fn get_eip712_domain_separator(env: Env) -> soroban_sdk::Bytes;
+    fn get_eip712_domain_separator(env: Env) -> Bytes;
 }
 
 // ==================== Initialization Functions ====================
@@ -154,8 +150,8 @@ pub trait VaultInitialization {
         treasurer: Address,
         withdraw_verifier: Address,
         withdraw_ratio: i128,
-        eip712_domain_name: soroban_sdk::String,
-        eip712_domain_version: soroban_sdk::String,
+        eip712_domain_name: String,
+        eip712_domain_version: String,
     );
 }
 
