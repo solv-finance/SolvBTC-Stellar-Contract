@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contractmeta, contracttype, log, panic_with_error,
+    contract, contracterror, contractimpl, contracttype, panic_with_error,
     Address, Env, String, Symbol,
 };
 use stellar_fungible;

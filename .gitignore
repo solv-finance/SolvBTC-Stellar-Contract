@@ -1,40 +1,44 @@
-# Rust 编译产物
+# Rust build artifacts
 /target/
 **/target/
 Cargo.lock
 
-# 编辑器和 IDE 文件
+# Editor and IDE files
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
 
-# 操作系统文件
+# Operating system files
 .DS_Store
 Thumbs.db
 
-# 环境变量和密钥
+# Environment variables and keys
 .env
 .env.local
 *.pem
 *.key
+.stellar/
 
-# 日志文件
+# Log files
 *.log
 
-# WASM 相关
+# WASM related
 *.wasm
 !target/wasm32-unknown-unknown/optimized/*.wasm
 
-# 临时文件
+# Temporary files
 *.tmp
 *.bak
 
-# 其他
+# Others
 node_modules/
 js/*/dist/
 js/*/node_modules/
+js-bindings/
+**/js-bindings/
+**/config.js
 
-# 忽略所有 test_snapshots 目录
+# Ignore all test_snapshots directories
 **/test_snapshots/ 

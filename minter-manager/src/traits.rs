@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env, Map, Vec};
+use soroban_sdk::{contractclient, Address, Env, Vec};
 
 // ==================== Trait Definitions ====================
 
@@ -33,6 +33,7 @@ pub trait QueryTrait {
     fn token_contract(env: Env) -> Address;
 }
 
+#[contractclient(name = "MinterClient")]
 /// Minter Manager Interface
 pub trait MinterManagerInterface {
     /// Initialize the contract

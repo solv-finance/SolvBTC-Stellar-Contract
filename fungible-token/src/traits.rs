@@ -1,6 +1,7 @@
-use soroban_sdk::{Address, Env, String};
+use soroban_sdk::{contractclient, Address, Env, String};
 
 // 1. Core token functionality trait
+#[contractclient(name = "TokenClient")]
 pub trait TokenInterface {
     /// Initialize contract
     fn initialize(

@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, Env, String, Vec};
+use soroban_sdk::{contractclient, contracttype, Address, Bytes, Env, String, Vec};
 
 // ==================== Deposit and Withdrawal Functions ====================
 
@@ -48,6 +48,9 @@ pub trait VaultOperations {
         signature: Bytes,
     ) -> i128;
 
+    /// Withdraw request
+    fn withdraw_request(env: Env, from: Address, shares: i128, request_hash: Bytes);
+
     /// Treasurer deposit (prepare liquidity for withdrawals)
     fn treasurer_deposit(env: Env, amount: i128);
 }
@@ -92,14 +95,17 @@ pub trait SystemManagement {
     fn set_minter_manager_by_admin(env: Env, minter_manager: Address);
 
     /// Set withdrawal fee ratio by admin
-    fn set_withdraw_ratio_by_admin(env: Env, withdraw_ratio: i128);
+    fn set_withdraw_fee_ratio_by_admin(env: Env, withdraw_fee_ratio: i128);
+
+    /// Set withdraw fee receiver by admin
+    fn set_withdraw_fee_recv_by_admin(env: Env, withdraw_fee_receiver: Address);
 
     /// Set EIP712 domain parameters by admin
     fn set_eip712_domain_by_admin(env: Env, name: String, version: String);
 }
 
 // ==================== Query Functions ====================
-
+#[contractclient(name = "VaultClient")]
 /// Query trait
 pub trait VaultQuery {
     /// Get admin address
@@ -118,7 +124,10 @@ pub trait VaultQuery {
     fn get_minter_manager(env: Env) -> Address;
 
     /// Get withdrawal fee ratio
-    fn get_withdraw_ratio(env: Env) -> i128;
+    fn get_withdraw_fee_ratio(env: Env) -> i128;
+
+    /// Get withdrawal fee receiver
+    fn get_withdraw_fee_receiver(env: Env) -> Address;
 
     /// Check if contract is initialized
     fn is_initialized(env: Env) -> bool;
@@ -138,6 +147,22 @@ pub trait VaultQuery {
 
 // ==================== Initialization Functions ====================
 
+/// Vault initialization configuration
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct InitializeConfig {
+    pub admin: Address,
+    pub minter_manager: Address,
+    pub token_contract: Address,
+    pub oracle: Address,
+    pub treasurer: Address,
+    pub withdraw_verifier: Address,
+    pub withdraw_fee_ratio: i128,
+    pub withdraw_fee_receiver: Address,
+    pub eip712_domain_name: String,
+    pub eip712_domain_version: String,
+}
+
 /// Initialization trait
 pub trait VaultInitialization {
     /// Initialize contract
@@ -149,10 +174,28 @@ pub trait VaultInitialization {
         oracle: Address,
         treasurer: Address,
         withdraw_verifier: Address,
-        withdraw_ratio: i128,
+        withdraw_fee_ratio: i128,
+        withdraw_fee_receiver: Address,
         eip712_domain_name: String,
         eip712_domain_version: String,
     );
+
+    /// Initialize contract with config (convenience method)
+    fn initialize_with_config(env: Env, config: InitializeConfig) {
+        Self::initialize(
+            env,
+            config.admin,
+            config.minter_manager,
+            config.token_contract,
+            config.oracle,
+            config.treasurer,
+            config.withdraw_verifier,
+            config.withdraw_fee_ratio,
+            config.withdraw_fee_receiver,
+            config.eip712_domain_name,
+            config.eip712_domain_version,
+        );
+    }
 }
 
 // ==================== Event Definitions ====================
@@ -164,7 +207,6 @@ pub struct DepositEvent {
     pub user: Address,
     pub currency: Address,
     pub amount: i128,
-    pub token_contract: Address,
     pub minted_tokens: i128,
     pub nav: i128,
 }
@@ -174,11 +216,10 @@ pub struct DepositEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WithdrawEvent {
     pub from: Address,
-    pub target_amount: i128,
+    pub shares: i128,
     pub gross_amount: i128,
     pub fee_amount: i128,
     pub actual_amount: i128,
-    pub burned_tokens: i128,
     pub nav: i128,
     pub request_hash: Bytes,
 }

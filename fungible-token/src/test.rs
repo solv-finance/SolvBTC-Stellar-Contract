@@ -4,7 +4,7 @@ extern crate std;
 use crate::fungible_token::{FungibleToken, FungibleTokenClient};
 use soroban_sdk::vec;
 use soroban_sdk::{
-    log, symbol_short,
+    log,
     testutils::{
         Address as _, AuthorizedFunction, AuthorizedInvocation, Events, MockAuth, MockAuthInvoke,
     },
@@ -489,7 +489,7 @@ fn test_mint_unauthorized_non_admin() {
             AuthorizedInvocation {
                 function: AuthorizedFunction::Contract((
                     client.address.clone(),
-                    symbol_short!("mint"),
+                    Symbol::new(&env, "mint"),
                     (recipient.clone(), 100_i128).into_val(&env),
                 )),
                 sub_invocations: std::vec![]

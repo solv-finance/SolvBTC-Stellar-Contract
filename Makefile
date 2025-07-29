@@ -55,20 +55,20 @@ clean:
 
 generate-js:
 	soroban contract bindings typescript --overwrite \
-		--contract-id CAPQXPPAIUDIJRRDXLUAIY4QRG5QCJN2B5SFGQOGB6GPBSXKK6GX2ZKQ \
-		--wasm ./target/wasm32-unknown-unknown/optimized/fungible_token.wasm --output-dir ./js/js-fungible-token/ \
-		--rpc-url http://localhost:8000 --network-passphrase "Standalone Network ; February 2017" --network Standalone
+		--wasm ./target/wasm32-unknown-unknown/optimized/fungible_token.wasm \
+		--output-dir ./js-bindings/fungible-token/ \
+		--network testnet
 	soroban contract bindings typescript --overwrite \
-		--contract-id CB22PCIBZJQMEO7KLV4WUWDG7N6BRQ6QN3ALYGOUYO3ZPLVC2CS5V46K \
-		--wasm ./target/wasm32-unknown-unknown/optimized/solvbtc_vault.wasm --output-dir ./js/js-vault/ \
-		--rpc-url http://localhost:8000 --network-passphrase "Standalone Network ; February 2017" --network Standalone
+		--wasm ./target/wasm32-unknown-unknown/optimized/solvbtc_vault.wasm \
+		--output-dir ./js-bindings/vault/ \
+		--network testnet
 	soroban contract bindings typescript --overwrite \
-		--contract-id CBMKIQH4PJ6LN7DVG2G7TJLGPJUDOWGIH2UY5ULOGDAHKBSWMOXC3FMM \
-		--wasm ./target/wasm32-unknown-unknown/optimized/solvbtc_oracle.wasm --output-dir ./js/js-oracle/ \
-		--rpc-url http://localhost:8000 --network-passphrase "Standalone Network ; February 2017" --network Standalone
+		--wasm ./target/wasm32-unknown-unknown/optimized/solvbtc_oracle.wasm \
+		--output-dir ./js-bindings/oracle/ \
+		--network testnet
 	soroban contract bindings typescript --overwrite \
-		--contract-id CDRQZFAHFFYYVHRAQE7M4LNR2UZUZNVOEA4T2QQP4MYOXEN5GEIIXIWI \
-		--wasm ./target/wasm32-unknown-unknown/optimized/minter_manager.wasm --output-dir ./js/js-minter-manager/ \
-		--rpc-url http://localhost:8000 --network-passphrase "Standalone Network ; February 2017" --network Standalone
+		--wasm ./target/wasm32-unknown-unknown/optimized/minter_manager.wasm \
+		--output-dir ./js-bindings/minter-manager/ \
+		--network testnet
 
 .PHONY: default test build integration-test check fix doc fmt clean generate-js 

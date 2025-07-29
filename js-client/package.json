@@ -3,16 +3,18 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "echo \"Building js-client...\" && echo \"No TypeScript compilation needed for this project\""
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@stellar/stellar-sdk": "^13.3.0",
-    "soroban-client": "^1.0.1",
-    "stellar-sdk": "^13.3.0"
+    "@stellar/stellar-sdk": "14.0.0-rc.3",
+    "bip39": "^3.1.0",
+    "ed25519-hd-key": "^1.3.0",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@types/node": "^24.0.12",

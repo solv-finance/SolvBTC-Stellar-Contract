@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{contractclient, Address, Env};
 
 /// Oracle initialization trait
 /// Responsible for contract initialization and state checking
@@ -10,18 +10,13 @@ pub trait OracleInitialization {
     /// - `nav_decimals`: NAV decimal places
     /// - `initial_nav`: Initial NAV value
     /// - `max_change_bps`: Maximum NAV change in basis points (10000 = 100%)
-    fn initialize(
-        env: Env,
-        admin: Address,
-        nav_decimals: u32,
-        initial_nav: i128,
-        max_change_bps: u32,
-    );
+    fn initialize(env: Env, admin: Address, nav_decimals: u32, initial_nav: i128, vault: Address);
 
     /// Check if contract is initialized
     fn is_initialized(env: Env) -> bool;
 }
 
+#[contractclient(name = "OracleClient")]
 /// Oracle NAV management trait
 /// Responsible for NAV-related data queries
 pub trait NavQuery {
@@ -30,9 +25,6 @@ pub trait NavQuery {
 
     /// Get NAV decimal places
     fn get_nav_decimals(env: Env) -> u32;
-
-    /// Get maximum NAV change percentage
-    fn max_nav_change_percent(env: Env) -> u32;
 }
 
 /// Admin management trait
@@ -43,9 +35,6 @@ pub trait AdminManagement {
 
     /// Set NAV manager by admin
     fn set_nav_manager_by_admin(env: Env, manager_address: Address);
-
-    /// Set maximum NAV change by admin
-    fn set_max_nav_change_by_admin(env: Env, max_change_percent: u32);
 }
 
 /// NAV manager management trait

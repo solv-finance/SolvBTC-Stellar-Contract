@@ -5,6 +5,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal,
     Map, Symbol, Vec,
 };
+use crate::dependencies::*;
 const MAX_MINTERS: u32 = 10;
 // ==================== Error Definitions ====================
 
@@ -196,8 +197,7 @@ impl TokenOperationsTrait for MinterManager {
         let token_contract = Self::get_token_contract(&env);
 
         // Call token contract's mint function
-        let token_client = FungibleTokenClient::new(&env, &token_contract);
-        token_client.mint(&env, &to, &amount);
+        TokenClient::new(&env, &token_contract).mint(&to, &amount);
 
         // Publish mint event
         env.events()
@@ -217,9 +217,13 @@ impl TokenOperationsTrait for MinterManager {
         // Get token contract address
         let token_contract = Self::get_token_contract(&env);
 
+        // Transfer tokens to the minter manager contract
+        let spender = env.current_contract_address();
+        let token_client = TokenClient::new(&env, &token_contract);
+        token_client.transfer_from(&spender, &from, &spender, &amount);
+
         // Call token contract's burn function
-        let token_client = FungibleTokenClient::new(&env, &token_contract);
-        token_client.burn(&env, &amount);
+        token_client.burn(&amount);
 
         // Publish burn event
         env.events()
@@ -273,27 +277,4 @@ impl MinterManager {
     }
 }
 
-// ==================== Token Contract Client ====================
 
-#[contracttype]
-pub struct FungibleTokenClient {
-    contract_id: Address,
-}
-
-impl FungibleTokenClient {
-    pub fn new(_env: &Env, contract_id: &Address) -> Self {
-        Self {
-            contract_id: contract_id.clone(),
-        }
-    }
-
-    pub fn mint(&self, env: &Env, to: &Address, amount: &i128) {
-        let args = (to.clone(), amount.clone()).into_val(env);
-        let _: () = env.invoke_contract(&self.contract_id, &Symbol::new(env, "mint"), args);
-    }
-
-    pub fn burn(&self, env: &Env, amount: &i128) {
-        let args = (amount.clone(),).into_val(env);
-        let _: () = env.invoke_contract(&self.contract_id, &Symbol::new(env, "burn"), args);
-    }
-}

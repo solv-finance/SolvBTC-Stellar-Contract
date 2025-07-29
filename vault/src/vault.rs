@@ -1,11 +1,13 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, log, panic_with_error, symbol_short, vec,
-    Address, Bytes, BytesN, Env, FromVal, IntoVal, Map, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, Address,
+    Bytes, BytesN, Env, FromVal, IntoVal, Map, String, Symbol, Vec,
 };
 
-// Signature verification uses Soroban SDK built-in functionality
+// Import dependencies
+use crate::dependencies::*;
 
+// Signature verification uses Soroban SDK built-in functionality
 use crate::traits::*;
 
 // ==================== Constants ====================
@@ -41,17 +43,17 @@ pub enum DataKey {
     /// Withdrawal currency
     WithdrawCurrency,
     /// Withdrawal fee ratio
-    WithdrawRatio,
-    /// Fee collector address
-    FeeCollector,
-    /// Minimum fee amount
-    MinimumFee,
-    /// Used request hash (prevent replay attacks)
-    UsedRequestHash(Bytes),
+    WithdrawFeeRatio,
+    /// Withdraw fee receiver address
+    WithdrawFeeReceiver,
+    /// Withdrawal request status
+    WithdrawRequestStatus,
     /// EIP712 Domain name
     EIP712DomainName,
     /// EIP712 Domain version
     EIP712DomainVersion,
+    /// Used request hash mapping
+    UsedRequestHash(Bytes),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -103,18 +105,34 @@ pub enum VaultError {
     RequestHashAlreadyUsed = 16,
     /// Invalid NAV
     InvalidNav = 17,
+    /// Withdraw fee ratio not set
+    WithdrawFeeRatioNotSet = 18,
     /// Invalid withdraw fee ratio
-    InvalidWithdrawRatio = 18,
-    /// Fee collector address not set
-    FeeCollectorNotSet = 19,
+    InvalidWithdrawFeeRatio = 19,
+    /// Withdraw fee receiver address not set
+    WithdrawFeeReceiverNotSet = 20,
     /// NAV value expired
-    StaleNavValue = 20,
+    StaleNavValue = 21,
     /// Invalid fee amount
-    InvalidFeeAmount = 21,
+    InvalidFeeAmount = 22,
     /// Token contract not set
-    TokenContractNotSet = 22,
+    TokenContractNotSet = 23,
     /// Invalid signature format
-    InvalidSignatureFormat = 23,
+    InvalidSignatureFormat = 24,
+    /// Request already exists
+    RequestAlreadyExists = 25,
+    /// Insufficient balance
+    InsufficientBalance = 26,
+    /// Invalid request status
+    InvalidRequestStatus = 27,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[contracttype]
+pub enum WithdrawStatus {
+    NotExist = 0,
+    Pending = 1,
+    Done = 2,
 }
 
 /// SolvBTC Vault contract
@@ -133,7 +151,8 @@ impl VaultInitialization for SolvBTCVault {
         oracle: Address,
         treasurer: Address,
         withdraw_verifier: Address,
-        withdraw_ratio: i128,
+        withdraw_fee_ratio: i128,
+        withdraw_fee_receiver: Address,
         eip712_domain_name: String,
         eip712_domain_version: String,
     ) {
@@ -146,8 +165,8 @@ impl VaultInitialization for SolvBTCVault {
         }
 
         // Verify fee ratio
-        if withdraw_ratio < 0 || withdraw_ratio > FEE_PRECISION {
-            panic_with_error!(&env, VaultError::InvalidWithdrawRatio);
+        if withdraw_fee_ratio < 0 || withdraw_fee_ratio > FEE_PRECISION {
+            panic_with_error!(&env, VaultError::InvalidWithdrawFeeRatio);
         }
 
         // Set contract status
@@ -167,7 +186,10 @@ impl VaultInitialization for SolvBTCVault {
             .set(&DataKey::WithdrawVerifier, &withdraw_verifier);
         env.storage()
             .instance()
-            .set(&DataKey::WithdrawRatio, &withdraw_ratio);
+            .set(&DataKey::WithdrawFeeRatio, &withdraw_fee_ratio);
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawFeeReceiver, &withdraw_fee_receiver);
         // Initialize empty currency Map
         let empty_currencies: Map<Address, bool> = Map::new(&env);
         env.storage()
@@ -187,16 +209,32 @@ impl VaultInitialization for SolvBTCVault {
 
         // Publish initialization event
         env.events().publish(
-            (symbol_short!("init"),),
+            (Symbol::new(&env, "init"),),
             (
                 admin.clone(),
                 minter_manager,
                 oracle,
                 treasurer,
                 withdraw_verifier.clone(),
-                withdraw_ratio,
+                withdraw_fee_ratio,
             ),
         );
+    }
+
+    fn initialize_with_config(env: Env, config: InitializeConfig) {
+        Self::initialize(
+            env,
+            config.admin,
+            config.minter_manager,
+            config.token_contract,
+            config.oracle,
+            config.treasurer,
+            config.withdraw_verifier,
+            config.withdraw_fee_ratio,
+            config.withdraw_fee_receiver,
+            config.eip712_domain_name,
+            config.eip712_domain_version,
+        )
     }
 }
 
@@ -216,38 +254,54 @@ impl VaultOperations for SolvBTCVault {
         if !Self::is_currency_supported_internal(&env, &currency) {
             panic_with_error!(&env, VaultError::CurrencyNotSupported);
         }
-        let treasurer = Self::get_treasurer_internal(&env);
 
-        // Transfer from user to treasurer
-        Self::transfer_from_user(&env, &currency, &from, &treasurer, amount);
+        // Check if withdraw fee ratio is set
+        if Self::get_withdraw_fee_ratio_internal(&env) <= 0 {
+            panic_with_error!(&env, VaultError::WithdrawFeeReceiverNotSet);
+        }
 
-        // Get NAV value and Decimals
+        // Check if withdraw fee receiver is set
+        Self::get_withdraw_fee_receiver_internal(&env);
+
+        // Get NAV value
         let nav = Self::get_nav_from_oracle(&env);
         if nav <= 0 {
             panic_with_error!(&env, VaultError::InvalidNav);
         }
 
-        // Calculate the amount of tokens to be minted
-        let minted_tokens = Self::calculate_mint_amount(&env, amount, nav);
+        // Get treasurer address
+        let treasurer = Self::get_treasurer_internal(&env);
+
+        // Get currency decimals
+        let currency_decimals = TokenClient::new(&env, &currency).decimals();
+        // Get NAV decimals from Oracle
+        let nav_decimals = Self::get_nav_decimals_from_oracle(&env);
         // Get token contract address
         let token_contract = Self::get_token_contract_internal(&env);
-        // Call Minter Manager to mint tokens
-        Self::mint_tokens(
-            &env,
-            &env.current_contract_address(),
-            &from,
-            token_contract.clone(),
-            minted_tokens,
+        // Get shares decimals
+        let shares_decimals = TokenClient::new(&env, &token_contract).decimals();
+        // Calculate the amount of tokens to be minted
+        let minted_tokens = Self::calculate_mint_amount(
+            amount,
+            nav,
+            currency_decimals,
+            shares_decimals,
+            nav_decimals,
         );
+
+        // Transfer from user to treasurer
+        Self::transfer_from_user(&env, &currency, &from, &treasurer, amount);
+
+        // Call Minter Manager to mint tokens
+        Self::mint_tokens(&env, &env.current_contract_address(), &from, minted_tokens);
 
         // Publish deposit event
         env.events().publish(
-            (symbol_short!("deposit"),),
+            (Symbol::new(&env, "deposit"),),
             DepositEvent {
                 user: from.clone(),
                 currency: currency.clone(),
                 amount,
-                token_contract,
                 minted_tokens,
                 nav,
             },
@@ -256,10 +310,93 @@ impl VaultOperations for SolvBTCVault {
         minted_tokens
     }
 
+    fn withdraw_request(env: Env, from: Address, shares: i128, request_hash: Bytes) {
+        from.require_auth(); // Verify caller identity
+                             // Verify parameters
+        if shares <= 0 {
+            panic_with_error!(&env, VaultError::InvalidAmount);
+        }
+
+        // Check configuration contains(oracle, withdraw fee receiver, withdraw fee ratio, withdraw currency, token contract)
+        Self::validate_configuration(&env);
+
+        // Get current nav from oracle
+        let current_nav = Self::get_nav_from_oracle(&env);
+        if current_nav <= 0 {
+            panic_with_error!(&env, VaultError::InvalidNav);
+        }
+
+        // Get withdraw token address
+        let withdraw_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::WithdrawCurrency)
+            .unwrap();
+
+        // Generate unique request key: second hash with all parameters (_msgSender, withdrawToken, requestHash, shares, nav)
+        let request_key = Self::generate_request_key(
+            &env,
+            &from,
+            &withdraw_token,
+            &request_hash,
+            shares,
+            current_nav,
+        );
+
+        // Check if request already exists
+        let current_status: WithdrawStatus = env
+            .storage()
+            .persistent()
+            .get(&request_key)
+            .unwrap_or(WithdrawStatus::NotExist);
+
+        if current_status != WithdrawStatus::NotExist {
+            panic_with_error!(&env, VaultError::RequestAlreadyExists);
+        }
+
+        // Get token contract address
+        let token_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenContract)
+            .unwrap();
+
+        // Check user has enough shares balance
+        let token_client = TokenClient::new(&env, &token_contract);
+        let user_balance = token_client.balance_of(&from);
+
+        if user_balance < shares {
+            panic_with_error!(&env, VaultError::InsufficientBalance);
+        }
+
+        // Use minter_manager burn user's shares
+        let spender = env.current_contract_address();
+        let minter_manager = Self::get_minter_manager_internal(&env);
+        
+        // Step 1: Transfer tokens from user to Vault (user has already approved Vault)
+        token_client.transfer_from(&spender, &from, &spender, &shares);
+        
+        // Step 2: Vault approves MinterManager to transfer tokens from Vault
+        token_client.approve(&spender, &minter_manager, &shares);
+        
+        // Step 3: MinterManager burns Vault's shares (this will call transfer_from internally)
+        Self::burn_tokens(&env, &spender, shares);
+        // Set withdraw request status to PENDING
+        env.storage()
+            .persistent()
+            .set(&request_key, &WithdrawStatus::Pending);
+
+        // Emit WithdrawRequest event
+        env.events().publish(
+            (Symbol::new(&env, "WithdrawRequest"),),
+            (from, withdraw_token, shares, request_hash, current_nav),
+        );
+    }
+
     fn withdraw(
         env: Env,
         from: Address,
-        target_amount: i128,
+        shares: i128,
         nav: i128,
         request_hash: Bytes,
         timestamp: u64,
@@ -268,7 +405,7 @@ impl VaultOperations for SolvBTCVault {
         from.require_auth(); // Verify caller identity
 
         // Verify parameters
-        if target_amount <= 0 {
+        if shares <= 0 {
             panic_with_error!(&env, VaultError::InvalidAmount);
         }
 
@@ -276,20 +413,38 @@ impl VaultOperations for SolvBTCVault {
             panic_with_error!(&env, VaultError::InvalidNav);
         }
 
-        // Check if request hash is already used
-        if Self::is_request_hash_used(&env, &request_hash) {
-            panic_with_error!(&env, VaultError::RequestHashAlreadyUsed);
-        }
+        // Check configuration contains(oracle, withdraw fee receiver, withdraw fee ratio, withdraw currency, token contract)
+        Self::validate_configuration(&env);
 
-        // Get withdrawal currency
-        let withdraw_currency = Self::get_withdraw_currency_internal(&env);
+        // Get withdraw token address
+        let withdraw_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::WithdrawCurrency)
+            .unwrap();
+
+        // Get request key - second hash with all parameters (_msgSender, withdrawToken, requestHash, shares, nav)
+        let request_key =
+            Self::generate_request_key(&env, &from, &withdraw_token, &request_hash, shares, nav);
+
+        // Check if request hash is already used
+        let current_status: WithdrawStatus = env
+            .storage()
+            .persistent()
+            .get(&request_key)
+            .unwrap_or(WithdrawStatus::NotExist);
+
+        // Only requests with Pending status can be processed
+        if current_status != WithdrawStatus::Pending {
+            panic_with_error!(&env, VaultError::InvalidRequestStatus);
+        }
 
         // Verify signature
         Self::verify_withdraw_signature(
             &env,
             &from,
-            target_amount,
-            &withdraw_currency,
+            shares,
+            &withdraw_token,
             nav,
             &request_hash,
             timestamp,
@@ -297,47 +452,61 @@ impl VaultOperations for SolvBTCVault {
         );
 
         // Get fee ratio
-        let withdraw_ratio = Self::get_withdraw_ratio_internal(&env);
+        let withdraw_fee_ratio = Self::get_withdraw_fee_ratio_internal(&env);
+        
 
-        // Calculate actual withdrawal amount (based on NAV)
-        let gross_amount = Self::calculate_withdraw_amount(&env, target_amount, nav);
+        // Get token decimals for precise calculation
+        let shares_token_decimals = Self::get_shares_token_decimals(&env);
+        let withdraw_token_decimals = Self::get_withdraw_token_decimals(&env);
+        let nav_decimals = Self::get_nav_decimals_from_oracle(&env);
 
-        // Calculate fee
-        let fee_amount = (gross_amount * withdraw_ratio) / FEE_PRECISION;
-        let actual_amount = gross_amount - fee_amount;
+        // Calculate withdrawal amount with proper decimal handling
+        // amount = shares * nav * (10 ** withdrawTokenDecimals) / ((10 ** navDecimals) * (10 ** sharesTokenDecimals))
+        let shares_precision = 10_i128.pow(shares_token_decimals);
+        let nav_precision = 10_i128.pow(nav_decimals);
+        let withdraw_precision = 10_i128.pow(withdraw_token_decimals);
 
-        // Calculate the amount of tokens to be burned
-        let burned_tokens = target_amount;
-        // Get contract address
-        let vault_address = env.current_contract_address();
-        // Burn user's tokens
-        let token_contract = Self::get_token_contract_internal(&env);
-        Self::burn_tokens(&env, &vault_address, token_contract, burned_tokens);
+        let amount = (shares * nav * withdraw_precision) / (nav_precision * shares_precision);
 
-        // Transfer to user
-        Self::transfer_to_user(&env, &withdraw_currency, &from, actual_amount);
+        // Calculate fee: fee = amount * withdrawFeeRatio / 10000
+        let fee = (amount * withdraw_fee_ratio) / 10000;
+        let amount_after_fee = amount - fee;
 
-        // Mark request hash as used
+        // Set withdraw request status to DONE
         env.storage()
+            .persistent()
+            .set(&request_key, &WithdrawStatus::Done);
+
+        // Get fee receiver address
+        let fee_receiver: Address = env
+            .storage()
             .instance()
-            .set(&DataKey::UsedRequestHash(request_hash.clone()), &true);
+            .get(&DataKey::WithdrawFeeReceiver)
+            .unwrap();
+
+        // Transfer fee to fee receiver
+        if fee > 0 {
+            Self::transfer_to_user(&env, &withdraw_token, &fee_receiver, fee);
+        }
+
+        // Transfer remaining amount to user
+        Self::transfer_to_user(&env, &withdraw_token, &from, amount_after_fee);
 
         // Publish withdrawal event
         env.events().publish(
-            (symbol_short!("withdraw"),),
+            (Symbol::new(&env, "withdraw"),),
             WithdrawEvent {
                 from: from.clone(),
-                target_amount,
-                gross_amount,
-                fee_amount,
-                actual_amount,
-                burned_tokens,
+                shares,
+                gross_amount: amount,
+                fee_amount: fee,
+                actual_amount: amount_after_fee,
                 nav,
                 request_hash: request_hash.clone(),
             },
         );
 
-        actual_amount
+        amount_after_fee
     }
 
     fn treasurer_deposit(env: Env, amount: i128) {
@@ -346,7 +515,7 @@ impl VaultOperations for SolvBTCVault {
 
         // Verify parameters
         if amount <= 0 {
-            panic_with_error!(&env, VaultError::InvalidAmount);
+            panic_with_error!(&env, VaultError::InvalidAmount); 
         }
 
         // Get withdrawal currency
@@ -364,8 +533,10 @@ impl VaultOperations for SolvBTCVault {
         );
 
         // Publish event
-        env.events()
-            .publish((symbol_short!("tres_dep"),), (treasurer, amount));
+        env.events().publish(
+            (Symbol::new(&env, "treasurer_deposit"),),
+            (treasurer, amount),
+        );
     }
 }
 
@@ -401,7 +572,7 @@ impl CurrencyManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (symbol_short!("curr_add"),),
+            (Symbol::new(&env, "add_currency"),),
             CurrencyAddedEvent {
                 admin,
                 currency: currency.clone(),
@@ -432,7 +603,7 @@ impl CurrencyManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (symbol_short!("curr_rm"),),
+            (Symbol::new(&env, "remove_currency"),),
             CurrencyRemovedEvent {
                 admin,
                 currency: currency.clone(),
@@ -454,7 +625,7 @@ impl CurrencyManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (symbol_short!("wd_curr"),),
+            (Symbol::new(&env, "set_withdraw_currency"),),
             (Self::get_admin_internal(&env), currency),
         );
     }
@@ -490,7 +661,7 @@ impl SystemManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (symbol_short!("wd_verif"),),
+            (Symbol::new(&env, "set_withdraw_verifier"),),
             (Self::get_admin_internal(&env), verifier_address.clone()),
         );
     }
@@ -501,7 +672,7 @@ impl SystemManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (symbol_short!("oracle"),),
+            (Symbol::new(&env, "set_oracle"),),
             (Self::get_admin_internal(&env), oracle),
         );
     }
@@ -514,7 +685,7 @@ impl SystemManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (symbol_short!("treasur"),),
+            (Symbol::new(&env, "set_treasurer"),),
             (Self::get_admin_internal(&env), treasurer),
         );
     }
@@ -527,27 +698,40 @@ impl SystemManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (symbol_short!("minter"),),
+            (Symbol::new(&env, "set_minter_manager"),),
             (Self::get_admin_internal(&env), minter_manager),
         );
     }
 
-    fn set_withdraw_ratio_by_admin(env: Env, withdraw_ratio: i128) {
+    fn set_withdraw_fee_ratio_by_admin(env: Env, withdraw_fee_ratio: i128) {
         Self::require_admin(&env);
 
         // Verify fee ratio
-        if withdraw_ratio < 0 || withdraw_ratio > FEE_PRECISION {
-            panic_with_error!(&env, VaultError::InvalidWithdrawRatio);
+        if withdraw_fee_ratio < 0 || withdraw_fee_ratio > FEE_PRECISION {
+            panic_with_error!(&env, VaultError::InvalidWithdrawFeeRatio);
         }
 
         env.storage()
             .instance()
-            .set(&DataKey::WithdrawRatio, &withdraw_ratio);
+            .set(&DataKey::WithdrawFeeRatio, &withdraw_fee_ratio);
 
         // Publish event
         env.events().publish(
-            (symbol_short!("wd_ratio"),),
-            (Self::get_admin_internal(&env), withdraw_ratio),
+            (Symbol::new(&env, "set_withdraw_fee_ratio"),),
+            (Self::get_admin_internal(&env), withdraw_fee_ratio),
+        );
+    }
+
+    fn set_withdraw_fee_recv_by_admin(env: Env, withdraw_fee_receiver: Address) {
+        Self::require_admin(&env);
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawFeeReceiver, &withdraw_fee_receiver);
+
+        // Publish event
+        env.events().publish(
+            (Symbol::new(&env, "set_withdraw_fee_receiver"),),
+            (Self::get_admin_internal(&env), withdraw_fee_receiver),
         );
     }
 
@@ -564,7 +748,7 @@ impl SystemManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (symbol_short!("eip712"),),
+            (Symbol::new(&env, "set_eip712_domain"),),
             (Self::get_admin_internal(&env), name.clone(), version),
         );
     }
@@ -594,16 +778,13 @@ impl VaultQuery for SolvBTCVault {
     }
 
     fn get_minter_manager(env: Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&DataKey::MinterManager)
-            .unwrap()
+        Self::get_minter_manager_internal(&env)
     }
 
-    fn get_withdraw_ratio(env: Env) -> i128 {
+    fn get_withdraw_fee_ratio(env: Env) -> i128 {
         env.storage()
             .instance()
-            .get(&DataKey::WithdrawRatio)
+            .get(&DataKey::WithdrawFeeRatio)
             .unwrap()
     }
 
@@ -633,6 +814,10 @@ impl VaultQuery for SolvBTCVault {
 
     fn get_eip712_domain_separator(env: Env) -> Bytes {
         Self::calculate_domain_separator(&env)
+    }
+
+    fn get_withdraw_fee_receiver(env: Env) -> Address {
+        Self::get_withdraw_fee_receiver_internal(&env)
     }
 }
 
@@ -707,8 +892,8 @@ impl SolvBTCVault {
 
         // 1. EIP712Domain's TypeHash
         // keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)")
-        let type_hash = env.crypto().sha256(&Bytes::from_slice(env,
-            b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)"));
+        let type_hash = env.crypto().keccak256(&Bytes::from_slice(env,
+            b"Withdraw(uint256 chainId,string action,address user,address withdrawToken,uint256 shares,uint256 nav,bytes32 requestHash)"));
         domain_encoded.append(&type_hash.into());
 
         // 2. name field's hash
@@ -824,6 +1009,14 @@ impl SolvBTCVault {
             .unwrap_or_else(|| panic_with_error!(env, VaultError::TreasurerNotSet))
     }
 
+    /// Get minter manager address
+    fn get_minter_manager_internal(env: &Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::MinterManager)
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::MinterManagerNotSet))
+    }
+
     /// Get withdrawal currency
     fn get_withdraw_currency_internal(env: &Env) -> Address {
         env.storage()
@@ -833,11 +1026,19 @@ impl SolvBTCVault {
     }
 
     /// Get withdrawal fee ratio
-    fn get_withdraw_ratio_internal(env: &Env) -> i128 {
+    fn get_withdraw_fee_ratio_internal(env: &Env) -> i128 {
         env.storage()
             .instance()
-            .get(&DataKey::WithdrawRatio)
+            .get(&DataKey::WithdrawFeeRatio)
             .unwrap_or(0) // Default to 0 (no fee)
+    }
+
+    /// Get withdrawal fee receiver
+    fn get_withdraw_fee_receiver_internal(env: &Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::WithdrawFeeReceiver)
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawFeeReceiverNotSet))
     }
 
     /// Check if currency is supported
@@ -859,10 +1060,10 @@ impl SolvBTCVault {
             .unwrap_or_else(|| panic_with_error!(env, VaultError::OracleNotSet));
 
         // Call Oracle contract's get_nav method
-        env.invoke_contract(&oracle_address, &Symbol::new(env, "get_nav"), vec![env])
+        OracleClient::new(env, &oracle_address).get_nav()
     }
 
-    /// Get NAV decimals from Oracle
+    /// Get NAV decimals from Oracle contract
     fn get_nav_decimals_from_oracle(env: &Env) -> u32 {
         let oracle_address: Address = env
             .storage()
@@ -871,63 +1072,68 @@ impl SolvBTCVault {
             .unwrap_or_else(|| panic_with_error!(env, VaultError::OracleNotSet));
 
         // Call Oracle contract's get_nav_decimals method
-        env.invoke_contract(
-            &oracle_address,
-            &Symbol::new(env, "get_nav_decimals"),
-            vec![env],
-        )
+        OracleClient::new(env, &oracle_address).get_nav_decimals()
+    }
+
+    /// Get shares token decimals
+    fn get_shares_token_decimals(env: &Env) -> u32 {
+        let shares_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenContract)
+            .unwrap();
+
+        TokenClient::new(env, &shares_token).decimals()
+    }
+
+    /// Get withdraw token decimals
+    fn get_withdraw_token_decimals(env: &Env) -> u32 {
+        let withdraw_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::WithdrawCurrency)
+            .unwrap();
+
+        TokenClient::new(env, &withdraw_token).decimals()
     }
 
     /// Mint tokens
-    fn mint_tokens(env: &Env, from: &Address, to: &Address, token_contract: Address, amount: i128) {
+    fn mint_tokens(env: &Env, from: &Address, to: &Address, amount: i128) {
         let minter_manager: Address = env
             .storage()
             .instance()
             .get(&DataKey::MinterManager)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::MinterManagerNotSet));
 
-        // Call Minter Manager's mint method
-        let _result: () = env.invoke_contract(
-            &minter_manager,
-            &Symbol::new(env, "mint"),
-            (from.clone(), token_contract, to, amount).into_val(env),
-        );
+        MinterManagerClient::new(env, &minter_manager).mint(from, to, &amount);
     }
 
     /// Burn tokens
-    fn burn_tokens(env: &Env, from: &Address, token_contract: Address, amount: i128) {
+    fn burn_tokens(env: &Env, from: &Address, amount: i128) {
         let minter_manager: Address = env
             .storage()
             .instance()
             .get(&DataKey::MinterManager)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::MinterManagerNotSet));
 
-        // Call Minter Manager's burn method
-        let _result: () = env.invoke_contract(
-            &minter_manager,
-            &Symbol::new(env, "burn"),
-            (from.clone(), token_contract, amount).into_val(env),
-        );
+        MinterManagerClient::new(env, &minter_manager).burn(from, &amount);
     }
 
     /// Transfer from user
     fn transfer_from_user(env: &Env, token: &Address, from: &Address, to: &Address, amount: i128) {
         // Call token contract's transfer_from method
-        let _result: () = env.invoke_contract(
-            token,
-            &Symbol::new(env, "transfer_from"),
-            (env.current_contract_address(), from, to, amount).into_val(env),
+        TokenClient::new(env, token).transfer_from(
+            &env.current_contract_address(),
+            from,
+            to,
+            &amount,
         );
     }
 
     /// Transfer to user
     fn transfer_to_user(env: &Env, token: &Address, to: &Address, amount: i128) {
         // Call token contract's transfer method
-        let _result: () = env.invoke_contract(
-            token,
-            &Symbol::new(env, "transfer"),
-            (env.current_contract_address(), to, amount).into_val(env),
-        );
+        TokenClient::new(env, token).transfer(&env.current_contract_address(), to, &amount);
     }
 
     /// Verify withdrawal signature (using EIP712 standard)
@@ -982,33 +1188,85 @@ impl SolvBTCVault {
         );
     }
 
-    /// Check if request hash is already used
-    fn is_request_hash_used(env: &Env, request_hash: &Bytes) -> bool {
-        env.storage()
-            .instance()
-            .has(&DataKey::UsedRequestHash(request_hash.clone()))
-    }
-
     // Calculate mint amount for user after user Deposit
-    fn calculate_mint_amount(env: &Env, amount: i128, nav: i128) -> i128 {
-        // Get NAV decimals from Oracle
-        let nav_decimals = Self::get_nav_decimals_from_oracle(env);
-        let precision = 10_i128.pow(nav_decimals);
-        amount * precision / nav
+    fn calculate_mint_amount(
+        deposit_amount: i128,
+        nav: i128,
+        currency_decimals: u32,
+        shares_decimals: u32,
+        nav_decimals: u32,
+    ) -> i128 {
+        // shares = amount * (10^shares_decimals) * (10^nav_decimals) / (nav * (10^currency_decimals))
+        let shares_precision = 10_i128.pow(shares_decimals);
+        let nav_precision = 10_i128.pow(nav_decimals);
+        let currency_precision = 10_i128.pow(currency_decimals);
+
+        // Numerator: deposit_amount * shares_precision * nav_precision
+        let numerator = deposit_amount
+            .checked_mul(shares_precision)
+            .and_then(|x| x.checked_mul(nav_precision))
+            .expect("Overflow in numerator calculation");
+
+        // Denominator: nav * currency_precision
+        let denominator = nav
+            .checked_mul(currency_precision)
+            .expect("Overflow in denominator calculation");
+
+        // Return result
+        numerator / denominator
     }
 
-    /// Calculate withdrawal amount
-    fn calculate_withdraw_amount(env: &Env, target_amount: i128, nav: i128) -> i128 {
-        // Get NAV decimals from Oracle
-        let nav_decimals = Self::get_nav_decimals_from_oracle(env);
+    /// Validate configuration
+    fn validate_configuration(env: &Env) {
+        // Check Oracle
+        if env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::Oracle)
+            .is_none()
+        {
+            panic_with_error!(env, VaultError::OracleNotSet);
+        }
 
-        // Calculate precision divisor: 10^nav_decimals
-        let precision = 10_i128.pow(nav_decimals);
+        // Check withdraw fee receiver
+        if env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::WithdrawFeeReceiver)
+            .is_none()
+        {
+            panic_with_error!(env, VaultError::WithdrawFeeReceiverNotSet);
+        }
 
-        // Calculate actual amount: target_amount * nav / precision
-        target_amount * nav / precision
+        // Check withdraw fee ratio
+        let withdraw_fee_ratio: Option<i128> =
+            env.storage().instance().get(&DataKey::WithdrawFeeRatio);
+        if withdraw_fee_ratio.map_or(true, |r| r <= 0) {
+            panic_with_error!(env, VaultError::WithdrawFeeRatioNotSet);
+        }
+
+        // Check withdraw currency
+        if env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::WithdrawCurrency)
+            .is_none()
+        {
+            panic_with_error!(env, VaultError::WithdrawCurrencyNotSet);
+        }
+
+        // Check token contract
+        if env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::TokenContract)
+            .is_none()
+        {
+            panic_with_error!(env, VaultError::TokenContractNotSet);
+        }
     }
 
+    /// Get token contract address
     fn get_token_contract_internal(env: &Env) -> Address {
         env.storage()
             .instance()
@@ -1021,7 +1279,7 @@ impl SolvBTCVault {
         env.storage()
             .instance()
             .get(&DataKey::EIP712DomainName)
-            .unwrap_or_else(|| String::from_str(env, "SolvBTC Vault"))
+            .unwrap_or_else(|| String::from_str(env, "Solv Vault Withdraw"))
     }
 
     /// Get EIP712 domain version (internal function)
@@ -1037,5 +1295,41 @@ impl SolvBTCVault {
         let network_id = env.ledger().network_id(); // Return BytesN<32>
                                                     // Directly return network_id, convert to Bytes type
         network_id.into()
+    }
+
+    /// Generate second hash key with all parameters (_msgSender, withdrawToken, requestHash, shares, nav)
+    fn generate_request_key(
+        env: &Env,
+        from: &Address,
+        withdraw_token: &Address,
+        request_hash: &Bytes,
+        shares: i128,
+        nav: i128,
+    ) -> Bytes {
+        // Simple concatenation approach
+        let mut data = Bytes::new(env);
+
+        // Add from address as XDR bytes
+        let from_xdr = from.to_xdr(env);
+        data.append(&from_xdr);
+
+        // Add withdraw_token address as XDR bytes
+        let withdraw_token_xdr = withdraw_token.to_xdr(env);
+        data.append(&withdraw_token_xdr);
+
+        // Add request_hash
+        data.append(request_hash);
+
+        // Add shares as bytes (convert i128 to bytes)
+        let shares_bytes = Bytes::from_array(env, &shares.to_be_bytes());
+        data.append(&shares_bytes);
+
+        // Add nav as bytes
+        let nav_bytes = Bytes::from_array(env, &nav.to_be_bytes());
+        data.append(&nav_bytes);
+
+        // Hash the concatenated data
+        let request_key_hash = env.crypto().keccak256(&data);
+        Bytes::from_array(env, &request_key_hash.to_array())
     }
 }

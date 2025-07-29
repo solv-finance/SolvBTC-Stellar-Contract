@@ -1,0 +1,39 @@
+export const CONFIG = {
+  // Local network configuration
+  network: {
+    networkPassphrase: "Test SDF Network ; September 2015",
+    rpcUrl: "https://soroban-testnet.stellar.org",
+  },
+  // Contract IDs
+  contracts: {
+    fungibleToken: "CBZIS36J7KUQMUIVZKC5KWRZCC6GCY4AC5GCSZHOPMVBPFT7FBO4Z2DY",
+    fungibleToken2: "CDB3TPSJHGKXHNCYJPKQKIMAMGVWWHFGRDL66B2HDDMC2XDJTVA42MB6",
+    vault: "CC2GXABS6ZSL5TTKMAUN6PYYO5TTW3G4D6NVXFS6EJRIEH62H6DM7MJW",  // Fixed generate_request_key version
+    oracle: "CDOAQKBCV64HCOHVPOLGQNS5WDJNMDJTSDOACOP3LICA6TIPNHJ4LVGR",
+    minterManager: "CCS57II7ACEJVTI24BO2AI6UUUJIADNMKCL5CFFR2FSQSMF57UEUCKOF",
+  },
+  // Account keypairs - REPLACE WITH YOUR OWN KEYS
+  accounts: {
+    bob: {
+      publicKey: process.env.BOB_PUBLIC_KEY || "YOUR_BOB_PUBLIC_KEY_HERE",
+      secretKey: process.env.BOB_SECRET_KEY || "YOUR_BOB_SECRET_KEY_HERE"
+    },
+    deployer: {
+      publicKey: process.env.DEPLOYER_PUBLIC_KEY || "YOUR_DEPLOYER_PUBLIC_KEY_HERE",
+      secretKey: process.env.DEPLOYER_SECRET_KEY || "YOUR_DEPLOYER_SECRET_KEY_HERE"
+    },
+    admin: {
+      publicKey: process.env.ADMIN_PUBLIC_KEY || "YOUR_ADMIN_PUBLIC_KEY_HERE",
+      secretKey: process.env.ADMIN_SECRET_KEY || "YOUR_ADMIN_SECRET_KEY_HERE"
+    }
+  },
+  // Signature configuration for withdraw verification
+  signature: {
+    // BIP39 mnemonic for generating withdraw signatures
+    // WARNING: Replace with your own mnemonic, never use this in production!
+    mnemonic: process.env.WITHDRAW_MNEMONIC || "YOUR_24_WORD_MNEMONIC_HERE",
+    // BIP44 derivation path for Stellar
+    derivationPath: "m/44'/148'/0'"
+  }
+  // Test hash contract address: CA6JX2VIEAIVTEUBP3UMM2IKXXFT2HRNNNKDPI6DA6JOEBPVPN34Z3FP
+}; 

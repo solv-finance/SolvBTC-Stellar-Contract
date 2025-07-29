@@ -1,22 +1,25 @@
 import pkg from '@stellar/stellar-sdk';
 const { Keypair, hash, nativeToScVal } = pkg;
 import { createHash } from 'crypto';
+import * as bip39 from 'bip39';
+import { derivePath } from 'ed25519-hd-key';
+import { CONFIG } from './config.js';
 
 /**
- * 生成提款签名，与vault合约兼容
+ * Generate withdrawal signature, compatible with vault contract
  * 
- * @param {Object} params - 签名参数
- * @param {string} params.secretKey - 验证者的私钥
- * @param {string} params.userAddress - 用户地址
- * @param {BigInt} params.targetAmount - 目标提款金额
- * @param {string} params.targetToken - 目标代币地址
- * @param {BigInt} params.nav - 当前NAV值
- * @param {number} params.timestamp - 时间戳
- * @param {string} params.domainName - EIP712域名
- * @param {string} params.domainVersion - EIP712域版本
- * @param {string} params.chainId - 链ID
- * @param {string} params.contractAddress - 合约地址
- * @returns {Object} 签名结果，包含签名和请求哈希
+ * @param {Object} params - Signature parameters
+ * @param {string} params.secretKey - Validator's private key
+ * @param {string} params.userAddress - User address
+ * @param {BigInt} params.targetAmount - Target withdrawal amount
+ * @param {string} params.targetToken - Target token address
+ * @param {BigInt} params.nav - Current NAV value
+ * @param {number} params.timestamp - Timestamp
+ * @param {string} params.domainName - EIP712 domain name
+ * @param {string} params.domainVersion - EIP712 domain version
+ * @param {string} params.chainId - Chain ID
+ * @param {string} params.contractAddress - Contract address
+ * @returns {Object} Signature result, including signature and request hash
  */
 export async function generateWithdrawSignature(params) {
   const {
@@ -26,24 +29,21 @@ export async function generateWithdrawSignature(params) {
     targetToken,
     nav,
     timestamp,
-    domainName,
-    domainVersion,
-    chainId,
-    contractAddress,
-    domainSeparator // 新增参数：直接使用合约提供的域分隔符
+    domainSeparator, // New parameter: directly use the domain separator provided by the contract
+    requestHash      // Use the requestHash from withdraw_request step
   } = params;
 
-  console.log("生成提款签名...");
-  console.log("用户地址:", userAddress);
-  console.log("目标金额:", targetAmount.toString());
-  console.log("目标代币:", targetToken);
+  console.log("Generating withdraw signature...");
+  console.log("User address:", userAddress);
+  console.log("Target amount:", targetAmount.toString());
+  console.log("Target token:", targetToken);
   console.log("NAV:", nav.toString());
-  console.log("时间戳:", timestamp);
+  console.log("Timestamp:", timestamp);
+  console.log("Using requestHash from withdraw_request:", Buffer.from(requestHash).toString('hex'));
   
-  // 创建随机请求哈希
-  const requestHash = createRandomBytes(32);
+  // Use the provided requestHash instead of generating a new one
   
-  // 1. 创建提款消息
+  // Create withdraw message
   const withdrawMessage = createWithdrawMessage({
     userAddress,
     targetAmount,
@@ -53,17 +53,33 @@ export async function generateWithdrawSignature(params) {
     timestamp
   });
   
-  // 2. 计算消息哈希
+  // Calculate message hash
   const messageHash = sha256(withdrawMessage);
   
-  // 3. 创建EIP712签名消息
+  // Create EIP712 signature message
   const eip712Message = createEIP712SignatureMessage(domainSeparator, messageHash);
   
-  // 4. 使用私钥签名
-  const keypair = Keypair.fromSecret(secretKey);
+  // Choose signing method: either use provided secretKey or derive from mnemonic
+  let keypair;
+
+  // Derive key from mnemonic (BIP44 method)
+  console.log('Using mnemonic derivation method...');
+  const mnemonic = CONFIG.signature?.mnemonic;
+  const derivationPath = CONFIG.signature?.derivationPath || "m/44'/148'/0'";
+  const password = "";
+  
+  // Generate seed from mnemonic
+  const seedBuffer = await bip39.mnemonicToSeed(mnemonic, password);
+  const seedHex = seedBuffer.toString('hex');
+  
+  // Use BIP44 path to derive key
+  console.log(`Using derivation path: ${derivationPath}`);
+  const { key } = derivePath(derivationPath, seedHex);
+  keypair = Keypair.fromRawEd25519Seed(key);
+  console.log('Derived public key:', keypair.publicKey());
   const signature = keypair.sign(eip712Message);
   
-  console.log("签名生成完成");
+  console.log("Signature generated successfully");
   
   return {
     signature: signature,
@@ -72,7 +88,7 @@ export async function generateWithdrawSignature(params) {
 }
 
 /**
- * 创建提款消息 - 确保与vault合约中的create_withdraw_message完全一致
+ * Create withdrawal message - ensure complete consistency with create_withdraw_message in vault contract
  */
 function createWithdrawMessage(params) {
   const {
@@ -84,49 +100,49 @@ function createWithdrawMessage(params) {
     timestamp
   } = params;
   
-  // 创建一个缓冲区来存储所有字段
+  // Create a buffer to store all fields
   let buffer = Buffer.alloc(0);
   
-  // 1. 添加用户地址XDR
-  // 使用stellar-sdk的Address转换为XDR格式
+  // 1. Add user address XDR
+  // Use stellar-sdk's Address to convert to XDR format
   const address = new pkg.Address(userAddress);
   const userAddressXDR = nativeToScVal(address).toXDR();
   buffer = Buffer.concat([buffer, Buffer.from(userAddressXDR)]);
   
-  // 2. 添加目标金额 (i128 to_be_bytes)
-  const targetAmountBuffer = Buffer.alloc(16); // i128需要16字节
-  // JavaScript只支持到64位，这里需要特殊处理
-  // 对于正数，高8字节为0
+  // 2. Add target amount (i128 to_be_bytes)
+  const targetAmountBuffer = Buffer.alloc(16); // i128 needs 16 bytes
+  // JavaScript only supports up to 64 bits, so we need special handling
+  // For positive numbers, the high 8 bytes are 0
   for (let i = 0; i < 8; i++) {
     targetAmountBuffer[i] = 0;
   }
-  // 低8字节写入目标金额
+  // Write target amount to the low 8 bytes
   targetAmountBuffer.writeBigInt64BE(targetAmount, 8);
   buffer = Buffer.concat([buffer, targetAmountBuffer]);
   
-  // 3. 添加目标代币XDR
+  // 3. Add target token XDR
   const targetAddress = new pkg.Address(targetToken);
   const targetTokenXDR = nativeToScVal(targetAddress).toXDR();
   buffer = Buffer.concat([buffer, Buffer.from(targetTokenXDR)]);
   
-  // 4. 添加用户哈希 (与合约中一致)
-  const userHash = sha256(Buffer.from(requestHash, 'hex'));
+  // 4. Add user hash (same as in contract)
+  const userHash = sha256(requestHash);  // requestHash is already a Buffer
   buffer = Buffer.concat([buffer, userHash]);
   
-  // 5. 添加NAV值 (i128 to_be_bytes)
-  const navBuffer = Buffer.alloc(16); // i128需要16字节
-  // 高8字节为0
+  // 5. Add NAV value (i128 to_be_bytes)
+  const navBuffer = Buffer.alloc(16); // i128 needs 16 bytes
+  // The high 8 bytes are 0
   for (let i = 0; i < 8; i++) {
     navBuffer[i] = 0;
   }
-  // 低8字节写入NAV值
+  // Write NAV value to the low 8 bytes
   navBuffer.writeBigInt64BE(nav, 8);
   buffer = Buffer.concat([buffer, navBuffer]);
   
-  // 6. 添加请求哈希
-  buffer = Buffer.concat([buffer, Buffer.from(requestHash, 'hex')]);
+  // 6. Add request hash
+  buffer = Buffer.concat([buffer, requestHash]);  // requestHash is already a Buffer
   
-  // 7. 添加时间戳 (u64 to_be_bytes)
+  // 7. Add timestamp (u64 to_be_bytes)
   const timestampBuffer = Buffer.alloc(8);
   timestampBuffer.writeBigUInt64BE(BigInt(timestamp));
   buffer = Buffer.concat([buffer, timestampBuffer]);
@@ -134,7 +150,7 @@ function createWithdrawMessage(params) {
 }
 
 /**
- * 计算EIP712域分隔符
+ * Calculate EIP712 domain separator
  */
 function calculateDomainSeparator(params) {
   const {
@@ -144,64 +160,64 @@ function calculateDomainSeparator(params) {
     contractAddress
   } = params;
   
-  // 创建一个缓冲区来存储所有字段
+  // Create a buffer to store all fields
   let buffer = Buffer.alloc(0);
   
-  // 1. EIP712Domain的TypeHash
+  // 1. EIP712Domain's TypeHash
   const typeHash = sha256(Buffer.from("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)"));
   buffer = Buffer.concat([buffer, typeHash]);
   
-  // 2. 域名哈希
+  // 2. Domain name hash
   const nameHash = sha256(Buffer.from(domainName));
   buffer = Buffer.concat([buffer, nameHash]);
   
-  // 3. 版本哈希
+  // 3. Version hash
   const versionHash = sha256(Buffer.from(domainVersion));
   buffer = Buffer.concat([buffer, versionHash]);
   
-  // 4. 链ID
+  // 4. Chain ID
   buffer = Buffer.concat([buffer, Buffer.from(chainId, 'hex')]);
   
-  // 5. 合约地址哈希
+  // 5. Contract address hash
   const contractHash = sha256(Buffer.from(contractAddress));
   buffer = Buffer.concat([buffer, contractHash]);
   
-  // 6. 盐值（32字节的零值）
+  // 6. Salt (32 bytes of zeros)
   const salt = Buffer.alloc(32);
   buffer = Buffer.concat([buffer, salt]);
   
-  // 返回域分隔符哈希
+  // Return domain separator hash
   return sha256(buffer);
 }
 
 /**
- * 创建EIP712签名消息
+ * Create EIP712 signature message
  */
 function createEIP712SignatureMessage(domainSeparator, messageHash) {
-  // 创建一个缓冲区来存储所有字段
+  // Create a buffer to store all fields
   let buffer = Buffer.alloc(0);
   
-  // 1. 添加EIP712固定前缀 \x19\x01
+  // 1. Add EIP712 fixed prefix \x19\x01
   buffer = Buffer.concat([buffer, Buffer.from([0x19, 0x01])]);
   
-  // 2. 添加域分隔符
+  // 2. Add domain separator
   buffer = Buffer.concat([buffer, domainSeparator]);
   
-  // 3. 添加消息哈希
+  // 3. Add message hash
   buffer = Buffer.concat([buffer, messageHash]);
   
   return buffer;
 }
 
 /**
- * SHA-256哈希函数
+ * SHA-256 hash function
  */
 function sha256(data) {
   return createHash('sha256').update(data).digest();
 }
 
 /**
- * 生成随机字节
+ * Generate random bytes
  */
 function createRandomBytes(length) {
   const buffer = Buffer.alloc(length);
@@ -212,7 +228,7 @@ function createRandomBytes(length) {
 }
 
 /**
- * 获取域分隔符
+ * Get domain separator
  */
 export async function getDomainSeparator(vaultClient) {
   try {
@@ -220,13 +236,13 @@ export async function getDomainSeparator(vaultClient) {
     const domainSeparatorResult = await domainSeparatorOp.simulate();
     return domainSeparatorResult.result;
   } catch (error) {
-    console.error("获取域分隔符出错:", error.message);
+    console.error("Error getting domain separator:", error.message);
     return null;
   }
 }
 
 /**
- * 获取域名
+ * Get domain name
  */
 export async function getDomainName(vaultClient) {
   try {
@@ -234,13 +250,13 @@ export async function getDomainName(vaultClient) {
     const domainNameResult = await domainNameOp.simulate();
     return domainNameResult.result;
   } catch (error) {
-    console.error("获取域名出错:", error.message);
-    return "SolvBTC Vault"; // 默认值
+    console.error("Error getting domain name:", error.message);
+    return "SolvBTC Vault"; // Default value
   }
 }
 
 /**
- * 获取域版本
+ * Get domain version
  */
 export async function getDomainVersion(vaultClient) {
   try {
@@ -248,20 +264,20 @@ export async function getDomainVersion(vaultClient) {
     const domainVersionResult = await domainVersionOp.simulate();
     const versionStr = domainVersionResult.result;
     
-    // 处理"{string:1}"格式的版本号
+    // Handle "{string:1}" format version number
     if (typeof versionStr === 'string' && versionStr.startsWith('{string:')) {
       return versionStr.substring(8, versionStr.length - 1);
     }
     
     return versionStr;
   } catch (error) {
-    console.error("获取域版本出错:", error.message);
-    return "1"; // 默认值
+    console.error("Error getting domain version:", error.message);
+    return "1"; // Default value
   }
 }
 
 /**
- * 获取链ID
+ * Get chain ID
  */
 export async function getChainId(vaultClient) {
   try {
@@ -269,7 +285,7 @@ export async function getChainId(vaultClient) {
     const chainIdResult = await chainIdOp.simulate();
     return chainIdResult.result;
   } catch (error) {
-    console.error("获取链ID出错:", error.message);
-    return Buffer.alloc(32).toString('hex'); // 默认值
+    console.error("Error getting chain ID:", error.message);
+    return Buffer.alloc(32).toString('hex'); // Default value
   }
 } 

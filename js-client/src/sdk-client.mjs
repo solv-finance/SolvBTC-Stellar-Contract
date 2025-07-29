@@ -1,6 +1,9 @@
 import pkg from '@stellar/stellar-sdk';
 const { Keypair } = pkg;
 import { CONFIG } from './config.js';
+import { createHash, randomBytes } from 'crypto'; // Add this line
+import { ResourceUsageClient } from "@57block/stellar-resource-usage";
+
 
 // Import contract bindings
 import * as fungibleTokenModule from '../../js-bindings/fungible-token/dist/index.js';
@@ -11,9 +14,14 @@ import * as minterManagerModule from '../../js-bindings/minter-manager/dist/inde
 import { generateWithdrawSignature, getDomainSeparator, getDomainName, getDomainVersion, getChainId } from './signature-utils.mjs';
 
 // Initialize SDK client
-class StellarContractClient {
+export class StellarContractClient {
   constructor(config) {
     this.config = config;
+  }
+
+  // Generate random request hash
+  generateRandomRequestHash() {
+    return randomBytes(32);
   }
 
   // Create contract clients
@@ -195,7 +203,8 @@ class StellarContractClient {
         oracle: this.config.contracts.oracle,
         treasurer: keypair.publicKey(),
         withdraw_verifier: keypair.publicKey(),
-        withdraw_ratio: 100, // 1.0 (100%)
+        withdraw_fee_ratio: 100,
+        withdraw_fee_receiver: keypair.publicKey(), // 1.0 (100%)
         eip712_domain_name: "SolvBTC Vault",
         eip712_domain_version: "1"
       }, {
@@ -308,6 +317,7 @@ class StellarContractClient {
       const keypair = Keypair.fromSecret(secretKey);
       console.log("User address:", keypair.publicKey());
       console.log("Vault address:", this.config.contracts.vault);
+      console.log("Network passphrase:", this.config.network.networkPassphrase);
       
       const signer = pkg.contract.basicNodeSigner(keypair, this.config.network.networkPassphrase);
       // Create token contract client
@@ -342,28 +352,28 @@ class StellarContractClient {
       if (BigInt(allowanceResult.result) < BigInt(amount)) {
         console.log("Insufficient allowance, re-approving...");
         
-        // Build approve operation
+        // Build approve operation with correct parameter format
         const approveOp = await tokenClient.approve({
           from: keypair.publicKey(),
           spender: this.config.contracts.vault,
-          amount: BigInt(amount)
+          amount: amount.toString()  // Use string instead of BigInt
         }, {
-          fee: 100000,
+          fee: "10000",  // Use string for fee
           timeoutInSeconds: 30
         });
         
         // Simulate transaction
-        // try {
-        //   const simulationResult = await approveOp.simulate();
-        //   console.log("Approve simulation result:", simulationResult);
-        // } catch (simError) {
-        //   console.log("Approve simulation error:", simError.message);
-        // }
+        try {
+          const simulationResult = await approveOp.simulate();
+          console.log("Approve simulation result:");
+        } catch (simError) {
+          console.log("Approve simulation error:", simError.message);
+        }
         
         
         // Send transaction
         try {
-          const approveResult = await approveOp.signAndSend(signer);
+          const approveResult = await approveOp.signAndSend();
           console.log("Approve successful:");
         } catch (sendError) {
           console.error("Approve send error:", sendError);
@@ -386,13 +396,13 @@ class StellarContractClient {
         signTransaction: signer.signTransaction,
       });
       
-      // Build deposit operation
+      // Build deposit operation with correct parameter format
       const depositOp = await vaultClient.deposit({
         from: keypair.publicKey(),
         currency: currencyAddress,
-        amount: BigInt(amount)
+        amount: amount.toString()  // Use string instead of BigInt
       }, {
-        fee: 100000,
+        fee: "100000",  // Use string for fee
         timeoutInSeconds: 30
       });
       console.log("from:",keypair.publicKey());
@@ -424,14 +434,17 @@ class StellarContractClient {
     }
   }
 
-  // Withdraw
-  async withdraw(secretKey, amount) {
+  // Withdraw - New two-step process
+  async withdraw(secretKey, shares) {
     try {
-      console.log("Withdrawing from vault...");
+      console.log("Starting two-step withdraw process...");
+      console.log("Withdraw shares:", shares.toString());
+      
       const keypair = Keypair.fromSecret(secretKey);
       const signer = pkg.contract.basicNodeSigner(keypair, this.config.network.networkPassphrase);
-      // Create vault contract client, add sign function
-      const vaultClient = new vaultModule.Client({
+      
+      // Create vault contract client
+      const vaultClient = await vaultModule.Client({
         contractId: this.config.contracts.vault,
         networkPassphrase: this.config.network.networkPassphrase,
         rpcUrl: this.config.network.rpcUrl,
@@ -451,34 +464,98 @@ class StellarContractClient {
       // Get current NAV
       const navResult = await oracleClient.get_nav();
       const nav = navResult.result;
-      console.log("Current NAV:", nav);
+      console.log("Current NAV:", nav.toString());
       
-      // Get withdraw currency
+      // Generate request hash
+      const requestHash = this.generateRandomRequestHash();
+      console.log("Generated request hash:", Buffer.from(requestHash).toString('hex'));
+      
+      console.log("\n===== Step 1: withdraw_request =====");
+
+      // use approve to transfer shares to vault
+      const tokenClient = new fungibleTokenModule.Client({
+        contractId: this.config.contracts.fungibleToken,
+        networkPassphrase: this.config.network.networkPassphrase,
+        rpcUrl: this.config.network.rpcUrl,
+        allowHttp: true,
+        publicKey: keypair.publicKey(),
+        signTransaction: signer.signTransaction,
+      });
+      const approveOp = await tokenClient.approve({
+        from: keypair.publicKey(),
+        spender: this.config.contracts.vault,
+        amount: BigInt(shares)
+      });
+
+      try {
+        const approveResult = await approveOp.signAndSend();
+        console.log("Approve successful:", approveResult);
+      } catch (sendError) {
+        console.error("Approve send error:", sendError);
+        if (sendError.message.includes("NeedsMoreSignaturesError")) {
+          console.error("Needs more signatures, please check if you have sufficient permissions");
+        }
+        return false;
+      }
+
+      
+      // Step 1: Create withdraw request
+      const withdrawRequestOp = await vaultClient.withdraw_request({
+        from: keypair.publicKey(),
+        shares: BigInt(shares),
+        request_hash: requestHash
+      }, {
+        fee: 100000,
+        timeoutInSeconds: 30
+      });
+      
+      // Send withdraw request
+      try {
+        const requestResult = await withdrawRequestOp.signAndSend();
+        console.log("Withdraw request created successfully:", requestResult);
+      } catch (requestError) {
+        console.error("Withdraw request failed:", requestError.message);
+        return false;
+      }
+
+      console.log("\n===== Step 2: treasure deposit to vault =====")
+
+      const treasureApproveOp = await tokenClient.approve({
+        from: keypair.publicKey(),
+        spender: this.config.contracts.vault,
+        amount: BigInt(shares)
+      });
+
+      try {
+        const treasureApproveResult = await treasureApproveOp.signAndSend();
+        console.log("Treasure approve successful:", treasureApproveResult);
+      } catch (sendError) {
+        console.error("Treasure approve send error:", sendError);
+        if (sendError.message.includes("NeedsMoreSignaturesError")) {
+          console.error("Needs more signatures, please check if you have sufficient permissions");
+        }
+        return false;
+      }
+
+      const treasureDepositOp = await vaultClient.treasurer_deposit({
+        amount: BigInt(shares)
+      });
+      try {
+        const treasureDepositResult = await treasureDepositOp.signAndSend();
+        console.log("Treasure deposit successful:",);
+      } catch (sendError) {
+        console.error("Treasure deposit failed:", sendError.message);
+        return false;
+      }
+      
+      console.log("\n===== Step 3: withdraw =====");
+      
+      // Get withdraw currency and domain info for signature
       const withdrawCurrencyOp = await vaultClient.get_withdraw_currency();
       const withdrawCurrencyResult = await withdrawCurrencyOp.simulate();
       const targetToken = withdrawCurrencyResult.result;
       console.log("Withdraw currency:", targetToken);
       
-      // Get domain name, version, and chain ID
-      const domainNameOp = await vaultClient.get_eip712_domain_name();
-      const domainNameResult = await domainNameOp.simulate();
-      const domainName = domainNameResult.result;
-      console.log("Domain:", domainName);
-      
-      const domainVersionOp = await vaultClient.get_eip712_domain_version();
-      const domainVersionResult = await domainVersionOp.simulate();
-      let domainVersion = domainVersionResult.result;
-      // Handle "{string:1}" format version number
-      if (typeof domainVersion === 'string' && domainVersion.startsWith('{string:')) {
-        domainVersion = domainVersion.substring(8, domainVersion.length - 1);
-      }
-      console.log("Domain version:", domainVersion);
-      
-      const chainIdOp = await vaultClient.get_eip712_chain_id();
-      const chainIdResult = await chainIdOp.simulate();
-      const chainId = chainIdResult.result;
-      
-      // Get domain separator
       const domainSeparatorOp = await vaultClient.get_eip712_domain_separator();
       const domainSeparatorResult = await domainSeparatorOp.simulate();
       const domainSeparator = domainSeparatorResult.result;
@@ -486,32 +563,29 @@ class StellarContractClient {
       // Get current timestamp
       const timestamp = Math.floor(Date.now() / 1000);
       
-      // Generate real signature
+      // Generate signature for withdraw (Note: use shares instead of amount)
       const signatureData = await generateWithdrawSignature({
         secretKey,
         userAddress: keypair.publicKey(),
-        targetAmount: BigInt(amount),
+        targetAmount: BigInt(shares), // Important: use shares
         targetToken,
         nav,
         timestamp,
-        domainName,
-        domainVersion,
-        chainId,
-        contractAddress: this.config.contracts.vault,
-        domainSeparator // Pass domain separator
+        domainSeparator,
+        requestHash // Use the same request_hash
       });
       
       console.log("Signature data:", {
-        requestHash: Buffer.from(signatureData.requestHash).toString('hex'),
+        requestHash: Buffer.from(requestHash).toString('hex'),
         signature: Buffer.from(signatureData.signature).toString('hex')
       });
       
-      // Withdraw
+      // Step 2: Complete withdraw
       const withdrawOp = await vaultClient.withdraw({
         from: keypair.publicKey(),
-        target_amount: BigInt(amount),
+        shares: BigInt(shares),     // Use shares parameter
         nav: nav,
-        request_hash: signatureData.requestHash,
+        request_hash: requestHash,  // Must match step 1
         timestamp: timestamp,
         signature: signatureData.signature
       }, {
@@ -527,18 +601,19 @@ class StellarContractClient {
         console.log("Withdraw simulation error:", simError.message);
       }
       
-      // Send transaction
+      // Send withdraw transaction
       try {
         const withdrawResult = await withdrawOp.signAndSend();
-        console.log("Withdraw successful:", withdrawResult);
+        console.log("Withdraw completed successfully:", withdrawResult);
         return true;
       } catch (sendError) {
-        console.error("Withdraw send error:", sendError.message);
+        console.error("Withdraw failed:", sendError.message);
         if (sendError.message.includes("NeedsMoreSignaturesError")) {
           console.error("Needs more signatures, please check if you have sufficient permissions");
         }
         return false;
       }
+      
     } catch (error) {
       console.error("Withdraw error:", error.message);
       return false;
@@ -651,14 +726,15 @@ async function main() {
         // Use the first supported currency for deposit test
         const testCurrencyAddress = currenciesResult.result[0];
         
-        // 5. Deposit
-        // console.log("\n===== Deposit test =====");
-        // console.log("Using currency address:", testCurrencyAddress);
-        // await client.deposit(CONFIG.accounts.admin.secretKey, testCurrencyAddress, 50000000);
+        // 6. Deposit
+        console.log("\n===== Deposit test =====");
+        console.log("Using currency address:", testCurrencyAddress);
+        await client.deposit(CONFIG.accounts.deployer.secretKey, testCurrencyAddress, 50000000);
         
-        // 6. Withdraw
+        // 7. Withdraw (now a two-step process)
         console.log("\n===== Withdraw test =====");
-        await client.withdraw(CONFIG.accounts.admin.secretKey, 25000000);
+        // Parameter is number of shares, not final withdrawal amount
+        await client.withdraw(CONFIG.accounts.deployer.secretKey, 25000000);
       } else {
         console.log("No supported currencies, cannot perform deposit and withdraw tests");
       }
@@ -666,7 +742,7 @@ async function main() {
       console.error("Error querying supported currencies:", error.message);
     }
   } else {
-    console.log("\nNote: Admin key not provided, only query operations will be performed. If you want to perform write operations, please configure the admin key in config.js.");
+    console.log("\nNote: Bob key not provided, only query operations will be performed. If you want to perform write operations, please configure the bob key in config.js.");
   }
 }
 
