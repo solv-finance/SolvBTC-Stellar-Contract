@@ -1,7 +1,7 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, Address,
-    Bytes, BytesN, Env, FromVal, IntoVal, Map, String, Symbol, Vec,
+    Bytes, BytesN, Env, Map, String, Symbol, Vec,
 };
 
 // Import dependencies
@@ -18,6 +18,13 @@ const MAX_CURRENCIES: u32 = 10;
 /// Fee precision (10000 = 100%)
 const FEE_PRECISION: i128 = 10000;
 
+/// EIP712 domain name
+const EIP712_DOMAIN_NAME: &str = "Solv Vault Withdraw";
+
+/// EIP712 domain version
+const EIP712_DOMAIN_VERSION: &str = "1";
+
+
 // ==================== Data Structures ====================
 
 /// Storage data key enum
@@ -28,8 +35,6 @@ pub enum DataKey {
     Admin,
     /// Initialization status
     Initialized,
-    /// Minter Manager contract address
-    MinterManager,
     /// Oracle contract address
     Oracle,
     /// Treasurer address
@@ -39,7 +44,9 @@ pub enum DataKey {
     /// Token contract address
     TokenContract,
     /// Supported currencies mapping (Map<Address, bool>)
-    SupportedCurrencies,
+    AllowedCurrency,
+    /// Deposit fee ratio
+    DepositFeeRatio,
     /// Withdrawal currency
     WithdrawCurrency,
     /// Withdrawal fee ratio
@@ -72,59 +79,62 @@ pub struct EIP712Domain {
 #[repr(u32)]
 pub enum VaultError {
     /// Permission insufficient
-    Unauthorized = 1,
+    Unauthorized = 301,
     /// Invalid parameter
-    InvalidArgument = 2,
+    InvalidArgument = 302,
     /// Contract not initialized
-    NotInitialized = 3,
+    NotInitialized = 303,
     /// Contract already initialized
-    AlreadyInitialized = 4,
+    AlreadyInitialized = 304,
     /// Currency not supported
-    CurrencyNotSupported = 5,
+    CurrencyNotAllowed = 305,
     /// Exceeds maximum currency quantity
-    TooManyCurrencies = 6,
+    TooManyCurrencies = 306,
     /// Currency already exists
-    CurrencyAlreadyExists = 7,
+    CurrencyAlreadyExists = 307,
     /// Currency does not exist
-    CurrencyNotExists = 8,
+    CurrencyNotExists = 308,
     /// Invalid amount
-    InvalidAmount = 9,
+    InvalidAmount = 309,
     /// Oracle not set
-    OracleNotSet = 10,
-    /// Minter Manager not set
-    MinterManagerNotSet = 11,
+    OracleNotSet = 310,
+    /// Deposit fee ratio not set
+    DepositFeeRatioNotSet = 311,
     /// Treasurer not set
-    TreasurerNotSet = 12,
+    TreasurerNotSet = 312,
     /// Withdrawal verifier not set
-    WithdrawVerifierNotSet = 13,
+    WithdrawVerifierNotSet = 313,
     /// Withdrawal currency not set
-    WithdrawCurrencyNotSet = 14,
+    WithdrawCurrencyNotSet = 314,
     /// Signature verification failed
-    InvalidSignature = 15,
+    InvalidSignature = 315,
     /// Request hash already used
-    RequestHashAlreadyUsed = 16,
+    RequestHashAlreadyUsed = 316,
     /// Invalid NAV
-    InvalidNav = 17,
+    InvalidNav = 317,
     /// Withdraw fee ratio not set
-    WithdrawFeeRatioNotSet = 18,
+    WithdrawFeeRatioNotSet = 318,
     /// Invalid withdraw fee ratio
-    InvalidWithdrawFeeRatio = 19,
+    InvalidWithdrawFeeRatio = 319,
     /// Withdraw fee receiver address not set
-    WithdrawFeeReceiverNotSet = 20,
+    WithdrawFeeReceiverNotSet = 320,
     /// NAV value expired
-    StaleNavValue = 21,
+    StaleNavValue = 321,
     /// Invalid fee amount
-    InvalidFeeAmount = 22,
+    InvalidFeeAmount = 322,
     /// Token contract not set
-    TokenContractNotSet = 23,
+    TokenContractNotSet = 323,
     /// Invalid signature format
-    InvalidSignatureFormat = 24,
+    InvalidSignatureFormat = 324,
     /// Request already exists
-    RequestAlreadyExists = 25,
+    RequestAlreadyExists = 325,
     /// Insufficient balance
-    InsufficientBalance = 26,
+    InsufficientBalance = 326,
     /// Invalid request status
-    InvalidRequestStatus = 27,
+    InvalidRequestStatus = 327,
+    /// Invalid deposit fee ratio
+    InvalidDepositFeeRatio = 328,
+   
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -139,41 +149,29 @@ pub enum WithdrawStatus {
 #[contract]
 pub struct SolvBTCVault;
 
-// ==================== Initialization function implementation ====================
+// ==================== Constructor ====================
 
 #[contractimpl]
-impl VaultInitialization for SolvBTCVault {
-    fn initialize(
-        env: Env,
+impl SolvBTCVault {
+    pub fn __constructor(
+        env: &Env,
         admin: Address,
-        minter_manager: Address,
         token_contract: Address,
         oracle: Address,
         treasurer: Address,
         withdraw_verifier: Address,
+        deposit_fee_ratio: i128,
         withdraw_fee_ratio: i128,
         withdraw_fee_receiver: Address,
-        eip712_domain_name: String,
-        eip712_domain_version: String,
+        withdraw_currency: Address,
     ) {
-        // Verify admin permission
-        admin.require_auth();
-
-        // Check if already initialized
-        if Self::is_initialized_internal(&env) {
-            panic_with_error!(&env, VaultError::AlreadyInitialized);
-        }
-
         // Verify fee ratio
         if withdraw_fee_ratio < 0 || withdraw_fee_ratio > FEE_PRECISION {
-            panic_with_error!(&env, VaultError::InvalidWithdrawFeeRatio);
+            panic_with_error!(env, VaultError::InvalidWithdrawFeeRatio);
         }
 
         // Set contract status
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage()
-            .instance()
-            .set(&DataKey::MinterManager, &minter_manager);
         env.storage()
             .instance()
             .set(&DataKey::TokenContract, &token_contract);
@@ -190,51 +188,31 @@ impl VaultInitialization for SolvBTCVault {
         env.storage()
             .instance()
             .set(&DataKey::WithdrawFeeReceiver, &withdraw_fee_receiver);
-        // Initialize empty currency Map
-        let empty_currencies: Map<Address, bool> = Map::new(&env);
         env.storage()
             .instance()
-            .set(&DataKey::SupportedCurrencies, &empty_currencies);
-
-        // Set EIP712 domain parameter default values
+            .set(&DataKey::DepositFeeRatio, &deposit_fee_ratio);
+        
+        // Set withdraw currency
         env.storage()
             .instance()
-            .set(&DataKey::EIP712DomainName, &eip712_domain_name);
-        env.storage()
-            .instance()
-            .set(&DataKey::EIP712DomainVersion, &eip712_domain_version);
+            .set(&DataKey::WithdrawCurrency, &withdraw_currency);
 
         // Mark as initialized
         env.storage().instance().set(&DataKey::Initialized, &true);
+        env.storage().instance().set(&DataKey::EIP712DomainName, &EIP712_DOMAIN_NAME);
+        env.storage().instance().set(&DataKey::EIP712DomainVersion, &EIP712_DOMAIN_VERSION);
 
         // Publish initialization event
         env.events().publish(
-            (Symbol::new(&env, "init"),),
+            (Symbol::new(env, "initialize"),),
             (
                 admin.clone(),
-                minter_manager,
                 oracle,
                 treasurer,
                 withdraw_verifier.clone(),
                 withdraw_fee_ratio,
             ),
-        );
-    }
-
-    fn initialize_with_config(env: Env, config: InitializeConfig) {
-        Self::initialize(
-            env,
-            config.admin,
-            config.minter_manager,
-            config.token_contract,
-            config.oracle,
-            config.treasurer,
-            config.withdraw_verifier,
-            config.withdraw_fee_ratio,
-            config.withdraw_fee_receiver,
-            config.eip712_domain_name,
-            config.eip712_domain_version,
-        )
+        );  
     }
 }
 
@@ -252,16 +230,18 @@ impl VaultOperations for SolvBTCVault {
 
         // Check if currency is supported
         if !Self::is_currency_supported_internal(&env, &currency) {
-            panic_with_error!(&env, VaultError::CurrencyNotSupported);
+            panic_with_error!(&env, VaultError::CurrencyNotAllowed);
         }
 
-        // Check if withdraw fee ratio is set
-        if Self::get_withdraw_fee_ratio_internal(&env) <= 0 {
-            panic_with_error!(&env, VaultError::WithdrawFeeReceiverNotSet);
+        // Get deposit fee ratio
+        let deposit_fee_ratio = Self::get_deposit_fee_ratio_internal(&env);
+        if deposit_fee_ratio <= 0 {
+            panic_with_error!(&env, VaultError::DepositFeeRatioNotSet);
         }
 
-        // Check if withdraw fee receiver is set
-        Self::get_withdraw_fee_receiver_internal(&env);
+        // Calculate fee: fee = amount * depositFeeRatio / 10000
+        let fee = (amount * deposit_fee_ratio) / 10000;
+        let amount_after_fee = amount - fee;
 
         // Get NAV value
         let nav = Self::get_nav_from_oracle(&env);
@@ -271,7 +251,6 @@ impl VaultOperations for SolvBTCVault {
 
         // Get treasurer address
         let treasurer = Self::get_treasurer_internal(&env);
-
         // Get currency decimals
         let currency_decimals = TokenClient::new(&env, &currency).decimals();
         // Get NAV decimals from Oracle
@@ -280,27 +259,30 @@ impl VaultOperations for SolvBTCVault {
         let token_contract = Self::get_token_contract_internal(&env);
         // Get shares decimals
         let shares_decimals = TokenClient::new(&env, &token_contract).decimals();
+
+        // Transfer from user to treasurer
+        Self::transfer_from_user(&env, &currency, &from, &treasurer, amount);
+
         // Calculate the amount of tokens to be minted
         let minted_tokens = Self::calculate_mint_amount(
-            amount,
+            amount_after_fee,
             nav,
             currency_decimals,
             shares_decimals,
             nav_decimals,
         );
 
-        // Transfer from user to treasurer
-        Self::transfer_from_user(&env, &currency, &from, &treasurer, amount);
-
-        // Call Minter Manager to mint tokens
-        Self::mint_tokens(&env, &env.current_contract_address(), &from, minted_tokens);
+        // Directly mint shares using token contract; vault acts as minter (must be granted)
+        TokenClient::new(&env, &token_contract).mint_from(
+            &env.current_contract_address(),
+            &from,
+            &minted_tokens,
+        );
 
         // Publish deposit event
         env.events().publish(
-            (Symbol::new(&env, "deposit"),),
+            (Symbol::new(&env, "deposit"), currency.clone(), from.clone()),
             DepositEvent {
-                user: from.clone(),
-                currency: currency.clone(),
                 amount,
                 minted_tokens,
                 nav,
@@ -326,12 +308,8 @@ impl VaultOperations for SolvBTCVault {
             panic_with_error!(&env, VaultError::InvalidNav);
         }
 
-        // Get withdraw token address
-        let withdraw_token: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::WithdrawCurrency)
-            .unwrap();
+        // Get withdraw token address (first supported currency)
+        let withdraw_token: Address = Self::get_withdraw_currency_internal(&env);
 
         // Generate unique request key: second hash with all parameters (_msgSender, withdrawToken, requestHash, shares, nav)
         let request_key = Self::generate_request_key(
@@ -363,24 +341,15 @@ impl VaultOperations for SolvBTCVault {
 
         // Check user has enough shares balance
         let token_client = TokenClient::new(&env, &token_contract);
-        let user_balance = token_client.balance_of(&from);
+        let user_balance = token_client.balance(&from);
 
         if user_balance < shares {
             panic_with_error!(&env, VaultError::InsufficientBalance);
         }
 
-        // Use minter_manager burn user's shares
         let spender = env.current_contract_address();
-        let minter_manager = Self::get_minter_manager_internal(&env);
-        
-        // Step 1: Transfer tokens from user to Vault (user has already approved Vault)
-        token_client.transfer_from(&spender, &from, &spender, &shares);
-        
-        // Step 2: Vault approves MinterManager to transfer tokens from Vault
-        token_client.approve(&spender, &minter_manager, &shares);
-        
-        // Step 3: MinterManager burns Vault's shares (this will call transfer_from internally)
-        Self::burn_tokens(&env, &spender, shares);
+        // Burn user's shares directly via token burn_from using vault as spender
+        token_client.burn_from(&spender, &from, &shares);
         // Set withdraw request status to PENDING
         env.storage()
             .persistent()
@@ -388,8 +357,12 @@ impl VaultOperations for SolvBTCVault {
 
         // Emit WithdrawRequest event
         env.events().publish(
-            (Symbol::new(&env, "WithdrawRequest"),),
-            (from, withdraw_token, shares, request_hash, current_nav),
+            (Symbol::new(&env, "WithdrawRequest"), from.clone(), withdraw_token.clone()),
+            WithdrawRequestEvent {
+                shares,
+                request_hash,
+                nav: current_nav,
+            },
         );
     }
 
@@ -494,15 +467,10 @@ impl VaultOperations for SolvBTCVault {
 
         // Publish withdrawal event
         env.events().publish(
-            (Symbol::new(&env, "withdraw"),),
+            (Symbol::new(&env, "withdraw"), from.clone(), withdraw_token.clone()),
             WithdrawEvent {
-                from: from.clone(),
-                shares,
-                gross_amount: amount,
-                fee_amount: fee,
-                actual_amount: amount_after_fee,
-                nav,
-                request_hash: request_hash.clone(),
+                amount: amount_after_fee,
+                timestamp,
             },
         );
 
@@ -534,8 +502,10 @@ impl VaultOperations for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (Symbol::new(&env, "treasurer_deposit"),),
-            (treasurer, amount),
+            (Symbol::new(&env, "treasurer_deposit"), withdraw_currency.clone()),
+            TreasurerDepositEvent {
+                amount,
+            },
         );
     }
 }
@@ -551,7 +521,7 @@ impl CurrencyManagement for SolvBTCVault {
         let mut currencies: Map<Address, bool> = env
             .storage()
             .instance()
-            .get(&DataKey::SupportedCurrencies)
+            .get(&DataKey::AllowedCurrency)
             .unwrap_or_else(|| Map::new(&env));
 
         // Check if exceeds maximum quantity
@@ -568,14 +538,13 @@ impl CurrencyManagement for SolvBTCVault {
         currencies.set(currency.clone(), true);
         env.storage()
             .instance()
-            .set(&DataKey::SupportedCurrencies, &currencies);
+            .set(&DataKey::AllowedCurrency, &currencies);
 
         // Publish event
         env.events().publish(
-            (Symbol::new(&env, "add_currency"),),
-            CurrencyAddedEvent {
-                admin,
-                currency: currency.clone(),
+            (Symbol::new(&env, "add_currency"), currency.clone()),
+            SetAllowedCurrencyEvent {
+                allowed: true,
             },
         );
     }
@@ -587,7 +556,7 @@ impl CurrencyManagement for SolvBTCVault {
         let mut currencies: Map<Address, bool> = env
             .storage()
             .instance()
-            .get(&DataKey::SupportedCurrencies)
+            .get(&DataKey::AllowedCurrency)
             .unwrap_or_else(|| Map::new(&env));
 
         // Check if currency exists
@@ -599,34 +568,14 @@ impl CurrencyManagement for SolvBTCVault {
         currencies.remove(currency.clone());
         env.storage()
             .instance()
-            .set(&DataKey::SupportedCurrencies, &currencies);
+            .set(&DataKey::AllowedCurrency, &currencies);
 
         // Publish event
         env.events().publish(
-            (Symbol::new(&env, "remove_currency"),),
+            (Symbol::new(&env, "remove_currency"), currency.clone()),
             CurrencyRemovedEvent {
                 admin,
-                currency: currency.clone(),
             },
-        );
-    }
-
-    fn set_withdraw_currency_by_admin(env: Env, currency: Address) {
-        Self::require_admin(&env);
-
-        // Check if currency is supported
-        if !Self::is_currency_supported_internal(&env, &currency) {
-            panic_with_error!(&env, VaultError::CurrencyNotSupported);
-        }
-
-        env.storage()
-            .instance()
-            .set(&DataKey::WithdrawCurrency, &currency);
-
-        // Publish event
-        env.events().publish(
-            (Symbol::new(&env, "set_withdraw_currency"),),
-            (Self::get_admin_internal(&env), currency),
         );
     }
 
@@ -634,7 +583,7 @@ impl CurrencyManagement for SolvBTCVault {
         let currencies: Map<Address, bool> = env
             .storage()
             .instance()
-            .get(&DataKey::SupportedCurrencies)
+            .get(&DataKey::AllowedCurrency)
             .unwrap_or_else(|| Map::new(&env));
         currencies.keys()
     }
@@ -661,8 +610,8 @@ impl SystemManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (Symbol::new(&env, "set_withdraw_verifier"),),
-            (Self::get_admin_internal(&env), verifier_address.clone()),
+            (Symbol::new(&env, "set_withdraw_verifier"), verifier_address.clone()),
+            (Self::get_admin_internal(&env))
         );
     }
 
@@ -672,8 +621,8 @@ impl SystemManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (Symbol::new(&env, "set_oracle"),),
-            (Self::get_admin_internal(&env), oracle),
+            (Symbol::new(&env, "set_oracle"), oracle.clone()),
+            (Self::get_admin_internal(&env))
         );
     }
 
@@ -685,21 +634,26 @@ impl SystemManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (Symbol::new(&env, "set_treasurer"),),
-            (Self::get_admin_internal(&env), treasurer),
+            (Symbol::new(&env, "set_treasurer"), treasurer.clone()),
+            (Self::get_admin_internal(&env))
         );
     }
 
-    fn set_minter_manager_by_admin(env: Env, minter_manager: Address) {
+    fn set_deposit_fee_ratio_by_admin(env: Env, deposit_fee_ratio: i128) {
         Self::require_admin(&env);
+        // Verify fee ratio
+        if deposit_fee_ratio < 0 || deposit_fee_ratio > FEE_PRECISION {
+            panic_with_error!(&env, VaultError::InvalidDepositFeeRatio);
+        }
+
         env.storage()
             .instance()
-            .set(&DataKey::MinterManager, &minter_manager);
+            .set(&DataKey::DepositFeeRatio, &deposit_fee_ratio);
 
         // Publish event
         env.events().publish(
-            (Symbol::new(&env, "set_minter_manager"),),
-            (Self::get_admin_internal(&env), minter_manager),
+            (Symbol::new(&env, "set_deposit_fee_ratio"),),
+            (Self::get_admin_internal(&env), deposit_fee_ratio)
         );
     }
 
@@ -718,7 +672,7 @@ impl SystemManagement for SolvBTCVault {
         // Publish event
         env.events().publish(
             (Symbol::new(&env, "set_withdraw_fee_ratio"),),
-            (Self::get_admin_internal(&env), withdraw_fee_ratio),
+            (Self::get_admin_internal(&env), withdraw_fee_ratio)
         );
     }
 
@@ -730,28 +684,11 @@ impl SystemManagement for SolvBTCVault {
 
         // Publish event
         env.events().publish(
-            (Symbol::new(&env, "set_withdraw_fee_receiver"),),
-            (Self::get_admin_internal(&env), withdraw_fee_receiver),
+            (Symbol::new(&env, "set_withdraw_fee_receiver"), withdraw_fee_receiver.clone()),
+            (Self::get_admin_internal(&env))
         );
     }
 
-    fn set_eip712_domain_by_admin(env: Env, name: String, version: String) {
-        Self::require_admin(&env);
-
-        // Set EIP712 domain parameter
-        env.storage()
-            .instance()
-            .set(&DataKey::EIP712DomainName, &name);
-        env.storage()
-            .instance()
-            .set(&DataKey::EIP712DomainVersion, &version);
-
-        // Publish event
-        env.events().publish(
-            (Symbol::new(&env, "set_eip712_domain"),),
-            (Self::get_admin_internal(&env), name.clone(), version),
-        );
-    }
 }
 
 // ==================== Query function implementation ====================
@@ -777,14 +714,17 @@ impl VaultQuery for SolvBTCVault {
         env.storage().instance().get(&DataKey::Treasurer).unwrap()
     }
 
-    fn get_minter_manager(env: Env) -> Address {
-        Self::get_minter_manager_internal(&env)
-    }
-
     fn get_withdraw_fee_ratio(env: Env) -> i128 {
         env.storage()
             .instance()
             .get(&DataKey::WithdrawFeeRatio)
+            .unwrap()
+    }
+
+    fn get_deposit_fee_ratio(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::DepositFeeRatio)
             .unwrap()
     }
 
@@ -1009,20 +949,20 @@ impl SolvBTCVault {
             .unwrap_or_else(|| panic_with_error!(env, VaultError::TreasurerNotSet))
     }
 
-    /// Get minter manager address
-    fn get_minter_manager_internal(env: &Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&DataKey::MinterManager)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::MinterManagerNotSet))
-    }
-
     /// Get withdrawal currency
     fn get_withdraw_currency_internal(env: &Env) -> Address {
         env.storage()
             .instance()
             .get(&DataKey::WithdrawCurrency)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawCurrencyNotSet))
+    }
+
+    /// Get deposit fee ratio
+    fn get_deposit_fee_ratio_internal(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::DepositFeeRatio)
+            .unwrap_or(0) // Default to 0 (no fee)
     }
 
     /// Get withdrawal fee ratio
@@ -1046,7 +986,7 @@ impl SolvBTCVault {
         let currencies: Map<Address, bool> = env
             .storage()
             .instance()
-            .get(&DataKey::SupportedCurrencies)
+            .get(&DataKey::AllowedCurrency)
             .unwrap_or_else(|| Map::new(env));
         currencies.contains_key(currency.clone())
     }
@@ -1095,28 +1035,6 @@ impl SolvBTCVault {
             .unwrap();
 
         TokenClient::new(env, &withdraw_token).decimals()
-    }
-
-    /// Mint tokens
-    fn mint_tokens(env: &Env, from: &Address, to: &Address, amount: i128) {
-        let minter_manager: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::MinterManager)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::MinterManagerNotSet));
-
-        MinterManagerClient::new(env, &minter_manager).mint(from, to, &amount);
-    }
-
-    /// Burn tokens
-    fn burn_tokens(env: &Env, from: &Address, amount: i128) {
-        let minter_manager: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::MinterManager)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::MinterManagerNotSet));
-
-        MinterManagerClient::new(env, &minter_manager).burn(from, &amount);
     }
 
     /// Transfer from user

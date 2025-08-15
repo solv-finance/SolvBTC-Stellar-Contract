@@ -4,7 +4,7 @@ use soroban_sdk::{
 };
 
 pub use crate::traits::{
-    AdminManagement, NavManagerManagement, NavQuery, OracleEvents, OracleInitialization,
+    AdminManagement, NavManagerManagement, NavQuery,
 };
 
 use crate::dependencies::VaultClient;
@@ -22,17 +22,17 @@ const MAX_NAV_DECIMALS: u32 = 18;
 #[repr(u32)]
 pub enum OracleError {
     // Insufficient permissions
-    Unauthorized = 1,
+    Unauthorized = 201,
     // Invalid argument
-    InvalidArgument = 2,
+    InvalidArgument = 202,
     // Contract not initialized
-    NotInitialized = 3,
+    NotInitialized = 203,
     // Contract already initialized
-    AlreadyInitialized = 4,
+    AlreadyInitialized = 204,
     // NAV change exceeds maximum allowed range
-    NavChangeExceedsLimit = 5,
+    NavChangeExceedsLimit = 205,
     // NAV manager not set
-    NavManagerNotSet = 6,
+    NavManagerNotSet = 206,
 }
 
 // ==================== Data Key Definition ====================
@@ -59,27 +59,23 @@ pub enum DataKey {
 #[contract]
 pub struct SolvBtcOracle;
 
-// ==================== Contract Implementation ====================
+// ==================== Constructor ====================
 
 #[contractimpl]
-impl OracleInitialization for SolvBtcOracle {
-    /// Initialize contract
-    fn initialize(env: Env, admin: Address, nav_decimals: u32, initial_nav: i128, vault: Address) {
-        // Verify admin permissions
-        admin.require_auth();
-
+impl SolvBtcOracle {
+    pub fn __constructor(env: &Env, admin: Address, nav_decimals: u32, initial_nav: i128) {
         // Check if already initialized
-        if Self::check_initialized(&env) {
-            panic_with_error!(&env, OracleError::AlreadyInitialized);
+        if Self::check_initialized(env) {
+            panic_with_error!(env, OracleError::AlreadyInitialized);
         }
 
         // Validate parameters
         if initial_nav <= 0 {
-            panic_with_error!(&env, OracleError::InvalidArgument);
+            panic_with_error!(env, OracleError::InvalidArgument);
         }
 
         if nav_decimals > MAX_NAV_DECIMALS {
-            panic_with_error!(&env, OracleError::InvalidArgument);
+            panic_with_error!(env, OracleError::InvalidArgument);
         }
 
         // Set initial data
@@ -89,17 +85,12 @@ impl OracleInitialization for SolvBtcOracle {
             .set(&DataKey::NavDecimals, &nav_decimals);
         env.storage().instance().set(&DataKey::Nav, &initial_nav);
         env.storage().instance().set(&DataKey::Initialized, &true);
-        env.storage().instance().set(&DataKey::Vault, &vault);
+
         // Publish initialization event
         env.events().publish(
-            (Symbol::new(&env, "init"),),
-            (admin.clone(), initial_nav, nav_decimals, vault.clone()),
+            (Symbol::new(env, "initialize"),),
+            (admin.clone(), initial_nav, nav_decimals),
         );
-    }
-
-    /// Check if contract is initialized
-    fn is_initialized(env: Env) -> bool {
-        Self::check_initialized(&env)
     }
 }
 
@@ -137,6 +128,17 @@ impl AdminManagement for SolvBtcOracle {
         env.events().publish(
             (Symbol::new(&env, "set_nav_manager"),),
             (Self::get_admin(&env), manager_address.clone()),
+        );
+    }
+
+    /// Set Vault address (admin only)
+    fn set_vault_by_admin(env: Env, vault: Address) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&DataKey::Vault, &vault);
+
+        env.events().publish(
+            (Symbol::new(&env, "set_vault"), vault.clone()),
+            (Self::get_admin(&env)),
         );
     }
 }
@@ -177,49 +179,6 @@ impl NavManagerManagement for SolvBtcOracle {
         env.events().publish(
             (Symbol::new(&env, "set_nav"),),
             (Self::get_nav_manager(&env), current_nav, nav),
-        );
-    }
-}
-
-// ==================== Additional Trait Implementations ====================
-
-#[contractimpl]
-impl OracleEvents for SolvBtcOracle {
-    /// Publish initialization event
-    fn emit_initialization_event(
-        env: Env,
-        admin: Address,
-        initial_nav: i128,
-        nav_decimals: u32,
-        max_change_percent: u32,
-    ) {
-        env.events().publish(
-            (Symbol::new(&env, "init"),),
-            (admin.clone(), initial_nav, nav_decimals, max_change_percent),
-        );
-    }
-
-    /// Publish NAV manager set event   
-    fn emit_nav_manager_set_event(env: Env, admin: Address, nav_manager: Address) {
-        env.events().publish(
-            (Symbol::new(&env, "set_nav_manager"),),
-            (admin.clone(), nav_manager.clone()),
-        );
-    }
-
-    /// Publish maximum change percentage update event
-    fn emit_max_change_updated_event(env: Env, admin: Address, max_change_percent: u32) {
-        env.events().publish(
-            (Symbol::new(&env, "set_max_nav_change"),),
-            (admin.clone(), max_change_percent),
-        );
-    }
-
-    /// Publish NAV value update event
-    fn emit_nav_updated_event(env: Env, nav_manager: Address, old_nav: i128, new_nav: i128) {
-        env.events().publish(
-            (Symbol::new(&env, "set_nav"),),
-            (nav_manager.clone(), old_nav, new_nav),
         );
     }
 }

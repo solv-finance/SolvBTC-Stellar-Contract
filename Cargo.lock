@@ -226,9 +226,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.30"
+version = "1.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "deec109607ca693028562ed836a5f1c4b8bd77755c4e132fc5ce11b0b6211ae7"
+checksum = "2352e5597e9c544d5e6d9c95190d5d27738ade584fa8db0a16e130e5c2b5296e"
 dependencies = [
  "shlex",
 ]
@@ -446,9 +446,9 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "dyn-clone"
-version = "1.0.19"
+version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c7a8fb8a9fbf66c1f703fe16184d10ca0ee9d23be5b4436400408ba54a95005"
+checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "ecdsa"
@@ -557,9 +557,10 @@ name = "fungible-token"
 version = "1.0.0"
 dependencies = [
  "soroban-sdk",
- "stellar-constants",
- "stellar-event-assertion",
+ "stellar-default-impl-macro",
  "stellar-fungible",
+ "stellar-ownable",
+ "stellar-ownable-macro",
  "stellar-pausable",
  "stellar-pausable-macros",
 ]
@@ -625,9 +626,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.15.4"
+version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5971ac85611da7067dbfcabef3c70ebb5606018acd9e2a3903a0da507521e0d5"
+checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 
 [[package]]
 name = "heapless"
@@ -711,7 +712,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe4cd85333e22411419a0bcae1297d25e58c9443848b11dc6a86fefe8c78a661"
 dependencies = [
  "equivalent",
- "hashbrown 0.15.4",
+ "hashbrown 0.15.5",
  "serde",
 ]
 
@@ -769,9 +770,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.174"
+version = "0.2.175"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1171693293099992e19cddea4e8b849964e9846f4acee11b3948bcc337be8776"
+checksum = "6a82ae493e598baaea5209805c49bbf2ea7de956d50d7da0da1164f9c6d28543"
 
 [[package]]
 name = "libm"
@@ -790,13 +791,6 @@ name = "memchr"
 version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
-
-[[package]]
-name = "minter-manager"
-version = "1.0.0"
-dependencies = [
- "soroban-sdk",
-]
 
 [[package]]
 name = "num-bigint"
@@ -913,9 +907,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.95"
+version = "1.0.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02b3e5e68a3a1a02aad3ec490a98007cbc13c37cbe84a3cd7b8e406d76e7f778"
+checksum = "d61789d7719defeb74ea5fe81f2fdfdbd28a803847077cecce2ff14e1472f6f1"
 dependencies = [
  "unicode-ident",
 ]
@@ -1000,9 +994,9 @@ dependencies = [
 
 [[package]]
 name = "rustversion"
-version = "1.0.21"
+version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a0d197bd2c9dc6e53b84da9556a69ba4cdfab8619eb41a8bd1cc2027a0f6b1d"
+checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "ryu"
@@ -1075,9 +1069,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.141"
+version = "1.0.142"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30b9eff21ebe718216c6ec64e1d9ac57087aad11efc64e32002bce4a0d4c03d3"
+checksum = "030fedb782600dcbd6f02d479bf0d817ac3bb40d644745b769d6a96bc3afc5a7"
 dependencies = [
  "itoa",
  "memchr",
@@ -1172,10 +1166,12 @@ name = "solvbtc-vault"
 version = "1.0.0"
 dependencies = [
  "ed25519-dalek",
+ "heapless",
  "hex",
  "rand",
  "sha3",
  "soroban-sdk",
+ "stellar-strkey 0.0.7",
 ]
 
 [[package]]
@@ -1397,55 +1393,87 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stellar-constants"
-version = "0.2.0"
-source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.2.0#aa585815451b48445796d87c82d006d2a08c6ef8"
+version = "0.3.0"
+source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.3.0#659fcabdc0e4712254dfebe4f45efd54f49826e9"
 dependencies = [
  "soroban-sdk",
 ]
 
 [[package]]
-name = "stellar-event-assertion"
-version = "0.2.0"
-source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.2.0#aa585815451b48445796d87c82d006d2a08c6ef8"
+name = "stellar-default-impl-macro"
+version = "0.3.0"
+source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.3.0#659fcabdc0e4712254dfebe4f45efd54f49826e9"
 dependencies = [
- "soroban-sdk",
- "stellar-non-fungible",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
 ]
 
 [[package]]
 name = "stellar-fungible"
-version = "0.2.0"
-source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.2.0#aa585815451b48445796d87c82d006d2a08c6ef8"
+version = "0.3.0"
+source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.3.0#659fcabdc0e4712254dfebe4f45efd54f49826e9"
 dependencies = [
  "soroban-sdk",
  "stellar-constants",
 ]
 
 [[package]]
-name = "stellar-non-fungible"
-version = "0.2.0"
-source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.2.0#aa585815451b48445796d87c82d006d2a08c6ef8"
+name = "stellar-macro-helpers"
+version = "0.3.0"
+source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.3.0#659fcabdc0e4712254dfebe4f45efd54f49826e9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
+name = "stellar-ownable"
+version = "0.3.0"
+source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.3.0#659fcabdc0e4712254dfebe4f45efd54f49826e9"
 dependencies = [
  "soroban-sdk",
  "stellar-constants",
+ "stellar-role-transfer",
+]
+
+[[package]]
+name = "stellar-ownable-macro"
+version = "0.3.0"
+source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.3.0#659fcabdc0e4712254dfebe4f45efd54f49826e9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "stellar-macro-helpers",
+ "syn 2.0.104",
 ]
 
 [[package]]
 name = "stellar-pausable"
-version = "0.2.0"
-source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.2.0#aa585815451b48445796d87c82d006d2a08c6ef8"
+version = "0.3.0"
+source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.3.0#659fcabdc0e4712254dfebe4f45efd54f49826e9"
 dependencies = [
  "soroban-sdk",
 ]
 
 [[package]]
 name = "stellar-pausable-macros"
-version = "0.2.0"
-source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.2.0#aa585815451b48445796d87c82d006d2a08c6ef8"
+version = "0.3.0"
+source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.3.0#659fcabdc0e4712254dfebe4f45efd54f49826e9"
 dependencies = [
  "proc-macro2",
  "quote",
+ "stellar-macro-helpers",
  "syn 2.0.104",
+]
+
+[[package]]
+name = "stellar-role-transfer"
+version = "0.3.0"
+source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.3.0#659fcabdc0e4712254dfebe4f45efd54f49826e9"
+dependencies = [
+ "soroban-sdk",
 ]
 
 [[package]]
@@ -1526,7 +1554,6 @@ dependencies = [
  "ed25519-dalek",
  "fungible-token",
  "heapless",
- "minter-manager",
  "rand",
  "solvbtc-oracle",
  "solvbtc-vault",

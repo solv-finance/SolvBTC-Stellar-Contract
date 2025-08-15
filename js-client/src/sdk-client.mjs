@@ -288,18 +288,7 @@ export class StellarContractClient {
       const addResult = await addCurrencyOp.send();
       console.log("Currency added successfully:", addResult);
       
-      // Set as withdraw currency
-      const setWithdrawOp = await vaultClient.set_withdraw_currency_by_admin({
-        currency: currencyAddress
-      }, {
-        fee: 100000,
-        timeoutInSeconds: 30
-      });
-      
-      // Sign and send transaction
-      setWithdrawOp.sign(keypair);
-      const setResult = await setWithdrawOp.send();
-      console.log("Withdraw currency set successfully:", setResult);
+      // Currency is now added and ready to use
       return true;
     } catch (error) {
       console.error("Error adding currency:", error.message);

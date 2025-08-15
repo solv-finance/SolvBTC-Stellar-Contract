@@ -1,123 +1,37 @@
-use soroban_sdk::{contractclient, Address, Env, String};
+use soroban_sdk::{contractclient, Address, Env, Vec};
 
-// 1. Core token functionality trait
-#[contractclient(name = "TokenClient")]
-pub trait TokenInterface {
-    /// Initialize contract
-    fn initialize(
-        env: Env,
-        admin: Address,
-        name: String,
-        symbol: String,
-        decimals: u32,
-        minter: Address,
-    );
-
-    /// Get token name
-    fn name(env: Env) -> String;
-
-    /// Get token symbol
-    fn symbol(env: Env) -> String;
-
-    /// Get decimal places
-    fn decimals(env: Env) -> u32;
-
-    /// Get total supply
-    fn total_supply(env: Env) -> i128;
-
-    /// Get account balance
-    fn balance_of(env: Env, account: Address) -> i128;
-
-    /// Transfer
-    fn transfer(env: Env, from: Address, to: Address, amount: i128);
-
-    /// Approve
-    fn approve(env: Env, from: Address, spender: Address, amount: i128);
-
-    /// Get allowance
-    fn allowance(env: Env, owner: Address, spender: Address) -> i128;
-
-    /// Transfer from
-    fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128);
-
-    /// Check if initialized
-    fn is_initialized(env: Env) -> bool;
-}
-
-// 2. Mintable functionality trait
+// 1. Mintable functionality trait 
 pub trait MintableToken {
-    /// Mint tokens (admin only)
-    fn mint(env: Env, to: Address, amount: i128);
+    /// Mint tokens (minter role only)
+    fn mint_from(env: Env, from: Address, to: Address, amount: i128);
 }
 
-// 3. Burnable functionality trait
-pub trait BurnableToken {
-    /// Burn tokens
-    fn burn(env: Env, amount: i128);
-}
-
-// 4. Pausable functionality trait
-pub trait PausableToken {
-    /// Pause contract (admin only)
-    fn pause(env: Env);
-
-    /// Unpause contract (admin only)
-    fn unpause(env: Env);
-
-    /// Check if contract is paused
-    fn is_paused(env: Env) -> bool;
-}
-
-// 5. Blacklist functionality trait
+// 2. Blacklist functionality trait 
 pub trait BlacklistTrait {
-    /// Add address to blacklist (admin only)
-    fn add_to_blacklist(env: Env, address: Address);
+    /// Add address to blacklist (blacklist manager role only)
+    fn add_to_blacklist(env: Env, from: Address, address: Address);
 
-    /// Remove address from blacklist (admin only)
-    fn remove_from_blacklist(env: Env, address: Address);
+    /// Remove address from blacklist (blacklist manager role only)
+    fn remove_from_blacklist(env: Env, from: Address, address: Address);
 
     /// Check if address is in blacklist
     fn is_blacklisted(env: Env, address: Address) -> bool;
+
+    /// Burn all tokens of a blacklisted address (admin role only)
+    fn burn_blacklisted_tokens_by_admin(env: Env, address: Address);
 }
 
-// 6. Admin functionality trait
-pub trait AdminTrait {
-    /// Get contract admin
-    fn admin(env: Env) -> Option<Address>;
+// 3. Minter management functionality trait
+pub trait MinterManagementTrait {
+    /// Add minter by admin (admin only)
+    fn add_minter_by_admin(env: Env, minter: Address);
 
-    /// Transfer admin permission (admin only)
-    fn transfer_admin(env: Env, new_admin: Address);
+    /// Remove minter by admin (admin only)
+    fn remove_minter_by_admin(env: Env, minter: Address);
 
-    /// Transfer mint authorization (admin only)
-    fn transfer_mint_authorization(env: Env, new_mint_authorization: Address);
+    /// Get all minters
+    fn get_minters(env: Env) -> Vec<Address>;
 
-    /// Get mint authorization
-    fn mint_authorization(env: Env) -> Option<Address>;
-}
-
-// 7. Internal helper trait (not exposed externally)
-pub(crate) trait InternalHelperTrait {
-    /// Require caller to be admin
-    fn require_admin(env: &Env) -> Address;
-
-    /// Get admin address (no authorization check)
-    fn require_admin_address(env: &Env) -> Address;
-
-    /// Require contract not paused
-    fn require_not_paused(env: &Env);
-
-    /// Require amount to be positive
-    fn require_positive_amount(env: &Env, amount: i128);
-
-    /// Require amount to be non-negative
-    fn require_non_negative_amount(env: &Env, amount: i128);
-
-    /// Require address not in blacklist
-    fn require_not_blacklisted(env: &Env, address: &Address);
-
-    /// Require caller to be mint authorization
-    fn require_mint_authorization(env: &Env) -> Address;
-
-    /// Require caller to be burn authorization
-    fn require_burn_authorization(env: &Env) -> Address;
+    /// Check if address is minter
+    fn is_minter(env: Env, address: Address) -> bool;
 }

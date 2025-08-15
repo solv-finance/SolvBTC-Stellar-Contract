@@ -1,90 +1,75 @@
-// Vault Integration Test - Using direct contract imports
-//
-// Integration Test Status Summary:
-// ============================================
-//
-// ✅ Passed tests (9):
-// 1. test_vault_query_functions - Vault query functionality test
-// 2. test_treasurer_deposit_operation - Treasurer deposit operation test
-// 3. test_withdraw_error_scenarios - Withdraw error scenarios test
-// 4. test_withdraw_with_invalid_signature_should_panic - Invalid signature panic test
-// 5. test_withdraw_signature_validation_structure - Signature validation structure test
-// 6. test_withdraw_with_real_signature_success - Real signature success test (simulated)
-// 7. test_complete_vault_withdraw_flow - Complete withdraw flow test
-// 8. test_simplified_deposit_without_nav - Simplified deposit test (without NAV setting)
-// 9. test_simplified_treasurer_deposit - Simplified treasurer deposit test
-//
-// ❌ Failed tests (6) - Mainly due to Oracle NAV setting circular dependency issues:
-// 1. test_complete_vault_deposit_flow - Oracle Error #5 (NAV setting issue)
-// 2. test_different_nav_values - Oracle Error #5 (NAV setting issue)
-// 3. test_deposit_operation_comprehensive - Oracle Error #5 (NAV setting issue)
-// 4. test_all_four_operations_integration - Oracle Error #5 (NAV setting issue)
-// 5. test_withdraw_request_operation - WasmVm InvalidAction (ConversionError)
-// 6. test_complete_withdraw_operation_flow - WasmVm InvalidAction (ConversionError)
-//
-// 🔧 Fixed issues:
-// - Contract imports: Changed from WASM imports to direct contract imports
-// - Client types: Use correct contract client names
-// - Withdraw fee receiver: Set in all required tests
-// - Decimal calculation: Fixed calculation differences between SolvBTC(18 digits) and WBTC(8 digits)
-// - Permission settings: Correctly set relationships between contracts
-//
-// 🚧 Remaining limitations:
-// - Oracle's set_nav_by_manager method has circular dependency, requires Oracle contract updates
-// - withdraw_request method encounters ConversionError in some cases
-// - Actual withdraw operations are simulated in test environment due to signature complexity
-//
-// 📊 Test coverage:
-// - Contract initialization: ✅ Fully covered
-// - Query functions: ✅ Fully covered
-// - Treasurer deposits: ✅ Fully covered
-// - User deposits: ✅ Partially covered (normal when NAV not set)
-// - Withdraw requests: ⚠️ Partially covered (basic functionality normal, complex scenarios have issues)
-// - Withdraw execution: ⚠️ Partially covered (parameter validation and preparation normal, actual execution simulated)
-
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String};
 
 // Direct contract implementation imports
-use fungible_token::FungibleToken;
-use minter_manager::MinterManager;
+use fungible_token::FungibleTokenContract;
 use solvbtc_oracle::SolvBtcOracle;
 use solvbtc_vault::SolvBTCVault;
 
 // Import clients
-use fungible_token::FungibleTokenClient;
-use minter_manager::MinterManagerClient;
+use fungible_token::FungibleTokenContractClient;
 use solvbtc_oracle::SolvBtcOracleClient;
 use solvbtc_vault::SolvBTCVaultClient;
 
 /// Contract creation helper functions
-pub fn create_fungible_token(env: &Env, _wasm: bool) -> (Address, FungibleTokenClient) {
-    let contract_id = env.register(FungibleToken, ());
+pub fn create_fungible_token<'a>(
+    env: &'a Env,
+    admin: &'a Address,
+    name: &'a str,
+    symbol: &'a str,
+    decimals: u32,
+) -> (Address, FungibleTokenContractClient<'a>) {
+    let contract_id = env.register(
+        FungibleTokenContract,
+        (
+            admin,
+            String::from_str(env, name),
+            String::from_str(env, symbol),
+            decimals,
+        ),
+    );
     (
         contract_id.clone(),
-        FungibleTokenClient::new(env, &contract_id),
-    )
-}
-
-pub fn create_minter_manager(env: &Env, _wasm: bool) -> (Address, MinterManagerClient) {
-    let contract_id = env.register(MinterManager, ());
-    (
-        contract_id.clone(),
-        MinterManagerClient::new(env, &contract_id),
+        FungibleTokenContractClient::new(env, &contract_id),
     )
 }
 
 pub fn create_oracle(env: &Env, _wasm: bool) -> (Address, SolvBtcOracleClient) {
-    let contract_id = env.register(SolvBtcOracle, ());
+    let admin = Address::generate(env);
+    let contract_id = env.register(SolvBtcOracle, (&admin, 8u32, 100_000_000i128));
     (
         contract_id.clone(),
         SolvBtcOracleClient::new(env, &contract_id),
     )
 }
 
-pub fn create_vault(env: &Env, _wasm: bool) -> (Address, SolvBTCVaultClient) {
-    let contract_id = env.register(SolvBTCVault, ());
+pub fn create_vault<'a>(
+    env: &'a Env,
+    admin: &'a Address,
+    token_contract: &'a Address,
+    oracle: &'a Address,
+    treasurer: &'a Address,
+    withdraw_verifier: &'a Address,
+    deposit_fee_ratio: i128,
+    withdraw_fee_ratio: i128,
+    withdraw_fee_receiver: &'a Address,
+    withdraw_currency: &'a Address,
+) -> (Address, SolvBTCVaultClient<'a>) {
+    let contract_id = env.register(
+        SolvBTCVault,
+        (
+            admin,
+            token_contract,
+            oracle,
+            treasurer,
+            withdraw_verifier,
+            deposit_fee_ratio,
+            withdraw_fee_ratio,
+            withdraw_fee_receiver,
+            withdraw_currency,
+        ),
+    );
     (
         contract_id.clone(),
         SolvBTCVaultClient::new(env, &contract_id),
@@ -102,7 +87,6 @@ struct VaultTestEnv {
     // Contract addresses
     solvbtc_token_addr: Address,
     wbtc_token_addr: Address,
-    minter_manager_addr: Address,
     oracle_addr: Address,
     vault_addr: Address,
 }
@@ -126,11 +110,21 @@ impl VaultTestEnv {
         let withdraw_verifier = Address::from_string(&verifier_str);
 
         // Deploy contracts (using WASM)
-        let (solvbtc_token_addr, _) = create_fungible_token(&env, true);
-        let (wbtc_token_addr, _) = create_fungible_token(&env, true);
-        let (minter_manager_addr, _) = create_minter_manager(&env, true);
+        let (solvbtc_token_addr, _) = create_fungible_token(&env, &admin, "SolvBTC Token", "SolvBTC", 18);
+        let (wbtc_token_addr, _) = create_fungible_token(&env, &admin, "Wrapped Bitcoin", "WBTC", 8);
         let (oracle_addr, _) = create_oracle(&env, true);
-        let (vault_addr, _) = create_vault(&env, true);
+        let (vault_addr, _) = create_vault(
+            &env,
+            &admin,
+            &solvbtc_token_addr,
+            &oracle_addr,
+            &treasurer,
+            &withdraw_verifier,
+            100,
+            100,
+            &admin,
+            &wbtc_token_addr, // Use WBTC as withdraw currency
+        );
 
         Self {
             env,
@@ -140,23 +134,18 @@ impl VaultTestEnv {
             withdraw_verifier,
             solvbtc_token_addr,
             wbtc_token_addr,
-            minter_manager_addr,
             oracle_addr,
             vault_addr,
         }
     }
 
     /// Get contract client
-    fn get_solvbtc_token_client(&self) -> FungibleTokenClient {
-        FungibleTokenClient::new(&self.env, &self.solvbtc_token_addr)
+    fn get_solvbtc_token_client(&self) -> FungibleTokenContractClient {
+        FungibleTokenContractClient::new(&self.env, &self.solvbtc_token_addr)
     }
 
-    fn get_wbtc_token_client(&self) -> FungibleTokenClient {
-        FungibleTokenClient::new(&self.env, &self.wbtc_token_addr)
-    }
-
-    fn get_minter_manager_client(&self) -> MinterManagerClient {
-        MinterManagerClient::new(&self.env, &self.minter_manager_addr)
+    fn get_wbtc_token_client(&self) -> FungibleTokenContractClient {
+        FungibleTokenContractClient::new(&self.env, &self.wbtc_token_addr)
     }
 
     fn get_oracle_client(&self) -> SolvBtcOracleClient {
@@ -169,94 +158,61 @@ impl VaultTestEnv {
 
     /// Initialize all contracts
     fn initialize_contracts(&self) {
-        // 1. Initialize SolvBTC token contract (minter manager has minting permission)
-        self.get_solvbtc_token_client().initialize(
-            &self.admin,
-            &String::from_str(&self.env, "SolvBTC Token"),
-            &String::from_str(&self.env, "SolvBTC"),
-            &18u32,
-            &self.minter_manager_addr, // minter manager has minting permission
-        );
+        // Tokens 已在注册时通过构造函数完成初始化，这里无需再次调用 initialize
 
-        // 2. Initialize WBTC token contract (admin has minting permission for testing)
-        self.get_wbtc_token_client().initialize(
-            &self.admin,
-            &String::from_str(&self.env, "Wrapped Bitcoin"),
-            &String::from_str(&self.env, "WBTC"),
-            &8u32,
-            &self.admin, // admin has minting permission for testing
-        );
+        // Oracle 已通过构造函数初始化
 
-        // 3. Initialize Minter Manager
-        self.get_minter_manager_client()
-            .initialize(&self.admin, &self.solvbtc_token_addr);
+        // 1. Vault 已通过构造函数初始化（包含 EIP712 域参数）
+        // Oracle 合约设置 Vault 地址
+        self.get_oracle_client().set_vault_by_admin(&self.vault_addr);
 
-        // 4. Initialize Oracle
-        self.get_oracle_client().initialize(
-            &self.admin,
-            &8u32,            // NAV decimal places
-            &100000000i128,   // Initial NAV = 1.0 (8 decimal places)
-            &self.vault_addr, // Vault address
-        );
-
-        // 5. Initialize Vault (contains EIP712 domain parameters)
-        // Use the same verifier address as in the create_real_keypair function
-        let domain_name = String::from_str(&self.env, "withdraw");
-        let domain_version = String::from_str(&self.env, "1");
-
-        self.get_vault_client().initialize(
-            &self.admin,
-            &self.minter_manager_addr,
-            &self.solvbtc_token_addr,
-            &self.oracle_addr,
-            &self.treasurer,
-            &self.withdraw_verifier,
-            &100i128, // 1% withdrawal fee
-            &self.admin, // withdraw_fee_receiver (use admin as fee receiver)
-            &domain_name,
-            &domain_version,
-        );
+        // Set EIP712 domain info to match test expectations
+        // domain setter removed; keep defaults
     }
 
     /// Set contract relationships
     fn setup_relationships(&self) {
-        // 1. Add Vault as a minter in Minter Manager
-        self.get_minter_manager_client()
-            .add_minter_by_admin(&self.vault_addr);
+        // 1. 授权合约权限
+        // 1.1 SolvBTC：Vault 需要作为 minter 铸造份额
+        self.get_solvbtc_token_client().add_minter_by_admin(&self.vault_addr);
+        // 1.2 WBTC：测试中由 admin 铸造用于充值的 WBTC
+        self.get_wbtc_token_client().add_minter_by_admin(&self.admin);
 
         // 2. Set NAV manager in Oracle
-        self.get_oracle_client()
-            .set_nav_manager_by_admin(&self.admin);
+        self.get_oracle_client().set_nav_manager_by_admin(&self.admin);
+        self.get_oracle_client().set_vault_by_admin(&self.vault_addr);
 
-        // 3. Add supported currency (WBTC) in Vault
+        // 3. Allow WBTC as supported currency for deposits
         self.get_vault_client()
             .add_currency_by_admin(&self.wbtc_token_addr);
 
-        // 4. Set withdrawal currency to WBTC
-        self.get_vault_client()
-            .set_withdraw_currency_by_admin(&self.wbtc_token_addr);
+        // 4. WBTC is already configured as withdraw currency in constructor
 
         // 5. Set withdraw fee receiver
         let fee_receiver = Address::generate(&self.env);
         self.get_vault_client()
             .set_withdraw_fee_recv_by_admin(&fee_receiver);
+
+        // 6. 其余权限已设置完毕
     }
 
     /// Mint test WBTC to user
     fn mint_wbtc_to_user(&self, amount: i128) {
-        self.get_wbtc_token_client().mint(&self.user, &amount);
+        self.get_wbtc_token_client().mint_from(&self.admin, &self.user, &amount);
     }
 
     /// User authorizes Vault to use WBTC
     fn approve_vault_for_wbtc(&self, amount: i128) {
+        let live: u32 = 1_800_000;
         self.get_wbtc_token_client()
-            .approve(&self.user, &self.vault_addr, &amount);
+            .approve(&self.user, &self.vault_addr, &amount, &live);
     }
 
     /// User authorizes Vault to use SolvBTC
     fn approve_vault_for_solvbtc(&self, amount: i128) {
+        let live: u32 = 1_800_000;
         self.get_solvbtc_token_client()
-            .approve(&self.user, &self.vault_addr, &amount);
+            .approve(&self.user, &self.vault_addr, &amount, &live);
     }
 
     /// Set Oracle NAV value
@@ -266,17 +222,17 @@ impl VaultTestEnv {
 
     /// Get user's WBTC balance
     fn get_user_wbtc_balance(&self) -> i128 {
-        self.get_wbtc_token_client().balance_of(&self.user)
+        self.get_wbtc_token_client().balance(&self.user)
     }
 
     /// Get treasurer's WBTC balance
     fn get_treasurer_wbtc_balance(&self) -> i128 {
-        self.get_wbtc_token_client().balance_of(&self.treasurer)
+        self.get_wbtc_token_client().balance(&self.treasurer)
     }
 
     /// Get user's SolvBTC balance
     fn get_user_solvbtc_balance(&self) -> i128 {
-        self.get_solvbtc_token_client().balance_of(&self.user)
+        self.get_solvbtc_token_client().balance(&self.user)
     }
 
     /// Execute deposit operation
@@ -484,13 +440,13 @@ impl VaultTestEnv {
 
     /// Mint WBTC to treasurer (for withdrawal liquidity)
     fn mint_wbtc_to_treasurer(&self, amount: i128) {
-        self.get_wbtc_token_client().mint(&self.treasurer, &amount);
+        self.get_wbtc_token_client().mint_from(&self.admin, &self.treasurer, &amount);
     }
 
     /// Treasurer authorizes vault to use WBTC
     fn approve_vault_for_treasurer_wbtc(&self, amount: i128) {
         self.get_wbtc_token_client()
-            .approve(&self.treasurer, &self.vault_addr, &amount);
+            .approve(&self.treasurer, &self.vault_addr, &amount, &1_800_000u32);
     }
 
     /// Treasurer deposits WBTC into vault (for withdrawal liquidity)
@@ -589,15 +545,13 @@ fn test_complete_vault_deposit_flow() {
     // Verify SolvBTC minting
     assert_eq!(final_user_solvbtc, minted_tokens); // User receives minted tokens
 
-    // Verify minting quantity calculation using correct precision formula
-    // Formula: shares = amount * (10^shares_decimals) * (10^nav_decimals) / (nav * (10^currency_decimals))
-    let shares_precision = 10_i128.pow(18); // SolvBTC has 18 decimals
-    let nav_precision = 10_i128.pow(8);     // NAV has 8 decimals
-    let currency_precision = 10_i128.pow(8); // WBTC has 8 decimals
-    
-    let numerator = deposit_amount * shares_precision * nav_precision;
-    let denominator = nav_value * currency_precision;
-    let expected_minted = numerator / denominator;
+    // Verify minting quantity calculation using correct precision formula with 1% deposit fee
+    let shares_precision = 10_i128.pow(18);
+    let nav_precision = 10_i128.pow(8);
+    let currency_precision = 10_i128.pow(8);
+    let deposit_fee_ratio_bps = 100i128; // 1%
+    let amount_after_fee = deposit_amount - (deposit_amount * deposit_fee_ratio_bps) / 10000;
+    let expected_minted = (amount_after_fee * shares_precision * nav_precision) / (nav_value * currency_precision);
     
     assert_eq!(minted_tokens, expected_minted);
 
@@ -669,15 +623,12 @@ fn test_different_nav_values() {
         // Execute deposit
         let minted_tokens = test_env.deposit(deposit_amount);
 
-        // Verify minting quantity using correct precision calculation
-        // Formula: shares = amount * (10^shares_decimals) * (10^nav_decimals) / (nav * (10^currency_decimals))
-        let shares_precision = 10_i128.pow(18); // SolvBTC has 18 decimals
-        let nav_precision = 10_i128.pow(8);     // NAV has 8 decimals
-        let currency_precision = 10_i128.pow(8); // WBTC has 8 decimals
-        
-        let numerator = deposit_amount * shares_precision * nav_precision;
-        let denominator = nav_value * currency_precision;
-        let expected_minted = numerator / denominator;
+        // Verify minting calculation with 1% deposit fee
+        let shares_precision = 10_i128.pow(18);
+        let nav_precision = 10_i128.pow(8);
+        let currency_precision = 10_i128.pow(8);
+        let amount_after_fee = deposit_amount - (deposit_amount * 100) / 10000;
+        let expected_minted = (amount_after_fee * shares_precision * nav_precision) / (nav_value * currency_precision);
         
         assert_eq!(minted_tokens, expected_minted);
 
@@ -802,8 +753,8 @@ fn test_complete_vault_withdraw_flow() {
         domain_separator.len()
     );
 
-    // Verify domain information
-    assert_eq!(domain_name.to_string(), "withdraw");
+    // Verify domain information (defaults)
+    assert_eq!(domain_name.to_string(), "Solv Vault Withdraw");
     assert_eq!(domain_version.to_string(), "1");
     assert_eq!(chain_id.len(), 32);
     assert_eq!(domain_separator.len(), 32);
@@ -999,7 +950,7 @@ fn test_withdraw_signature_validation_structure() {
     println!("chain_id: {:?}", chain_id);
     let domain_separator = vault_client.get_eip712_domain_separator();
     println!("domain_separator: {:?}", domain_separator);
-    assert_eq!(domain_name.to_string(), "withdraw");
+    assert_eq!(domain_name.to_string(), "Solv Vault Withdraw");
     assert_eq!(domain_version.to_string(), "1");
     assert_eq!(chain_id.len(), 32);
     assert_eq!(domain_separator.len(), 32);
@@ -1288,17 +1239,12 @@ fn test_deposit_operation_comprehensive() {
             "User should receive minted SolvBTC"
         );
 
-        // Verify minting calculation
-        // SolvBTC has 18 decimals, WBTC has 8 decimals, NAV has 8 decimals
-        // So we need to adjust decimal places: deposit_amount * nav_value * 10^10 / 10^8 = deposit_amount * nav_value * 10^2
-        // Use correct precision formula
-        let shares_precision = 10_i128.pow(18); // SolvBTC has 18 decimals
-        let nav_precision = 10_i128.pow(8);     // NAV has 8 decimals
-        let currency_precision = 10_i128.pow(8); // WBTC has 8 decimals
-        
-        let numerator = deposit_amount * shares_precision * nav_precision;
-        let denominator = nav_value * currency_precision;
-        let expected_minted = numerator / denominator;
+        // Verify minting calculation with 1% deposit fee
+        let shares_precision = 10_i128.pow(18);
+        let nav_precision = 10_i128.pow(8);
+        let currency_precision = 10_i128.pow(8);
+        let amount_after_fee = deposit_amount - (deposit_amount * 100) / 10000;
+        let expected_minted = (amount_after_fee * shares_precision * nav_precision) / (nav_value * currency_precision);
         
         assert_eq!(
             minted_tokens, expected_minted,
@@ -1564,7 +1510,7 @@ fn test_complete_withdraw_operation_flow() {
     let domain_version = vault_client.get_eip712_domain_version();
     let domain_separator = vault_client.get_eip712_domain_separator();
 
-    assert_eq!(domain_name.to_string(), "withdraw");
+    assert_eq!(domain_name.to_string(), "Solv Vault Withdraw");
     assert_eq!(domain_version.to_string(), "1");
     assert_eq!(domain_separator.len(), 32);
 
@@ -1782,9 +1728,14 @@ fn test_simplified_deposit_without_nav() {
     // Verify SolvBTC minting
     assert_eq!(after_user_solvbtc, minted_tokens, "User should receive minted tokens");
 
-    // Verify minting quantity calculation (using default NAV = 1.0)
+    // Verify minting quantity calculation with 1% deposit fee (using default NAV = 1.0)
     let initial_nav = 100_000_000i128; // Default initial NAV
-    let expected_minted = (deposit_amount * initial_nav * 10_000_000_000i128) / 100_000_000i128;
+    // shares = amount * 10^shares_decimals * 10^nav_decimals / (nav * 10^currency_decimals)
+    let shares_precision = 10_i128.pow(18);
+    let nav_precision = 10_i128.pow(8);
+    let currency_precision = 10_i128.pow(8);
+    let amount_after_fee = deposit_amount - (deposit_amount * 100) / 10000;
+    let expected_minted = (amount_after_fee * shares_precision * nav_precision) / (initial_nav * currency_precision);
     assert_eq!(
         minted_tokens, expected_minted,
         "Minting amount should be calculated correctly based on default NAV"
@@ -1847,7 +1798,6 @@ fn test_vault_initialization_with_config() {
 
     // Create test addresses
     let admin = Address::generate(&env);
-    let minter_manager = Address::generate(&env);
     let token_contract = Address::generate(&env);
     let oracle = Address::generate(&env);
     let treasurer = Address::generate(&env);
@@ -1857,63 +1807,73 @@ fn test_vault_initialization_with_config() {
     ));
     let fee_receiver = Address::generate(&env);
 
-    // Deploy vault contract
-    let (vault_addr, _) = create_vault(&env, false);
+    // Deploy vault contract (constructor-based)
+    let (vault_addr, _) = create_vault(
+        &env,
+        &admin,
+        &token_contract,
+        &oracle,
+        &treasurer,
+        &withdraw_verifier,
+        150,
+        150,
+        &fee_receiver,
+        &token_contract, // Use token as withdraw currency
+    );
     let vault_client = SolvBTCVaultClient::new(&env, &vault_addr);
+    // domain setter removed; keep defaults
 
-    // Create configuration using the new approach
-    use solvbtc_vault::InitializeConfig;
-    let config = InitializeConfig {
-        admin: admin.clone(),
-        minter_manager: minter_manager.clone(),
-        token_contract: token_contract.clone(),
-        oracle: oracle.clone(),
-        treasurer: treasurer.clone(),
-        withdraw_verifier: withdraw_verifier.clone(),
-        withdraw_fee_ratio: 150, // 1.5% fee
-        withdraw_fee_receiver: fee_receiver.clone(),
-        eip712_domain_name: String::from_str(&env, "SolvBTC-Integration"),
-        eip712_domain_version: String::from_str(&env, "2"),
-    };
-
-    // Initialize using the new config method
-    println!("Initializing vault with configuration...");
-    vault_client.initialize_with_config(&config);
+    // 使用构造函数重新部署一个带配置的 Vault
+    let config_name = String::from_str(&env, "SolvBTC-Integration");
+    let config_ver = String::from_str(&env, "2");
+    let (vault_addr_cfg, _) = create_vault(
+        &env,
+        &admin,
+        &token_contract,
+        &oracle,
+        &treasurer,
+        &withdraw_verifier,
+        150,
+        150,
+        &fee_receiver,
+        &token_contract, // Use token as withdraw currency
+    );
+    let vault_client = SolvBTCVaultClient::new(&env, &vault_addr_cfg);
+    // domain setter removed; keep defaults
 
     // Verify initialization
     println!("Verifying vault initialization...");
     assert!(vault_client.is_initialized());
     assert_eq!(vault_client.admin(), admin);
-    assert_eq!(vault_client.get_minter_manager(), minter_manager);
     assert_eq!(vault_client.get_oracle(), oracle);
     assert_eq!(vault_client.get_treasurer(), treasurer);
     assert_eq!(vault_client.get_withdraw_verifier(), withdraw_verifier);
     assert_eq!(vault_client.get_withdraw_fee_ratio(), 150);
-    assert_eq!(vault_client.get_eip712_domain_name(), String::from_str(&env, "SolvBTC-Integration"));
-    assert_eq!(vault_client.get_eip712_domain_version(), String::from_str(&env, "2"));
+    assert_eq!(vault_client.get_eip712_domain_name(), String::from_str(&env, "Solv Vault Withdraw"));
+    assert_eq!(vault_client.get_eip712_domain_version(), String::from_str(&env, "1"));
 
     println!("✓ Vault configuration-based initialization successful!");
     
     // Compare with traditional method
     println!("Comparing with traditional initialization method...");
     
-    // Deploy another vault for comparison
-    let (vault_addr2, _) = create_vault(&env, false);
-    let vault_client2 = SolvBTCVaultClient::new(&env, &vault_addr2);
-    
-    // Traditional initialization (more verbose)
-    vault_client2.initialize(
+    // Deploy another vault for comparison via constructor
+    let (vault_addr2, _) = create_vault(
+        &env,
         &admin,
-        &minter_manager,
         &token_contract,
         &oracle,
         &treasurer,
         &withdraw_verifier,
-        &150,
+        150,
+        150,
         &fee_receiver,
-        &String::from_str(&env, "SolvBTC-Integration"),
-        &String::from_str(&env, "2"),
+        &token_contract, // Use token as withdraw currency
     );
+    let vault_client2 = SolvBTCVaultClient::new(&env, &vault_addr2);
+    // domain setter removed; keep defaults
+    
+    // Traditional initialization removed; both are constructor-based
     
     // Both should have identical results
     assert_eq!(vault_client.admin(), vault_client2.admin());

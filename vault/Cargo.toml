@@ -19,3 +19,5 @@ hex = { workspace = true }
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] } 
 rand = { workspace = true } 
+stellar-strkey = { workspace = true }
+heapless = { workspace = true }

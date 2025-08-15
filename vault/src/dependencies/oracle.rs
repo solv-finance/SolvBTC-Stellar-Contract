@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use soroban_sdk::{contractclient, Env};
 
 // Define client interfaces for inter-contract communication

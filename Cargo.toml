@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "fungible-token",
-    "minter-manager",
     "oracle",
     "vault",
     "tests",
@@ -9,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-soroban-sdk = "22.0.1"
+soroban-sdk = "22.0.6"
 ed25519-dalek = { version = "=2.1.1", features = ["rand_core"] }
 sha3 = "0.10.8"
 hex = "0.4"

@@ -5,7 +5,6 @@ This project contains the implementation of SolvBTC smart contracts on the Stell
 ## Project Structure
 
 - `fungible-token/`: Fungible token contract
-- `minter-manager/`: Minter management contract
 - `oracle/`: Price oracle contract
 - `vault/`: Vault contract
 - `tests/`: Integration tests
@@ -77,7 +76,6 @@ The project is organized as a Cargo workspace with the following components:
 - **fungible-token**: Implementation of a fungible token contract compatible with Stellar standards
 - **vault**: Main vault contract for managing deposits and withdrawals
 - **oracle**: NAV (Net Asset Value) oracle contract for price feeds
-- **minter-manager**: Contract for managing token minting permissions
 - **integration-tests**: End-to-end integration tests for the contracts
 - **key-test**: Testing utilities for cryptographic operations
 
@@ -141,10 +139,4 @@ Provides NAV (Net Asset Value) data:
 - Enforces limits on NAV changes
 - Supports configurable precision
 
-### Minter Manager
-
-Manages token minting permissions:
-- Controls which addresses can mint tokens
-- Sets minting limits
-- Provides admin functions for managing minters
 

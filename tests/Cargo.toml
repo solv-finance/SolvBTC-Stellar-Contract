@@ -22,7 +22,6 @@ heapless = { workspace = true }
 
 # Use package name as dependency name, and use the hyphen-to-underscore rule when importing
 fungible_token = { path = "../fungible-token", package = "fungible-token" }
-minter_manager = { path = "../minter-manager", package = "minter-manager" }
 solvbtc_oracle = { path = "../oracle", package = "solvbtc-oracle" }
 solvbtc_vault = { path = "../vault", package = "solvbtc-vault" }
 

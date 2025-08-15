@@ -65,9 +65,6 @@ pub trait CurrencyManagement {
     /// Remove currency by admin
     fn remove_currency_by_admin(env: Env, currency: Address);
 
-    /// Set withdrawal currency by admin
-    fn set_withdraw_currency_by_admin(env: Env, currency: Address);
-
     /// Get supported currencies list
     fn get_supported_currencies(env: Env) -> Vec<Address>;
 
@@ -91,17 +88,15 @@ pub trait SystemManagement {
     /// Set treasurer by admin
     fn set_treasurer_by_admin(env: Env, treasurer: Address);
 
-    /// Set Minter Manager by admin
-    fn set_minter_manager_by_admin(env: Env, minter_manager: Address);
-
     /// Set withdrawal fee ratio by admin
     fn set_withdraw_fee_ratio_by_admin(env: Env, withdraw_fee_ratio: i128);
+
+    /// Set deposit fee ratio by admin
+    fn set_deposit_fee_ratio_by_admin(env: Env, deposit_fee_ratio: i128);
 
     /// Set withdraw fee receiver by admin
     fn set_withdraw_fee_recv_by_admin(env: Env, withdraw_fee_receiver: Address);
 
-    /// Set EIP712 domain parameters by admin
-    fn set_eip712_domain_by_admin(env: Env, name: String, version: String);
 }
 
 // ==================== Query Functions ====================
@@ -120,11 +115,11 @@ pub trait VaultQuery {
     /// Get treasurer address
     fn get_treasurer(env: Env) -> Address;
 
-    /// Get Minter Manager address
-    fn get_minter_manager(env: Env) -> Address;
-
     /// Get withdrawal fee ratio
     fn get_withdraw_fee_ratio(env: Env) -> i128;
+
+    /// Get deposit fee ratio
+    fn get_deposit_fee_ratio(env: Env) -> i128;
 
     /// Get withdrawal fee receiver
     fn get_withdraw_fee_receiver(env: Env) -> Address;
@@ -145,58 +140,6 @@ pub trait VaultQuery {
     fn get_eip712_domain_separator(env: Env) -> Bytes;
 }
 
-// ==================== Initialization Functions ====================
-
-/// Vault initialization configuration
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct InitializeConfig {
-    pub admin: Address,
-    pub minter_manager: Address,
-    pub token_contract: Address,
-    pub oracle: Address,
-    pub treasurer: Address,
-    pub withdraw_verifier: Address,
-    pub withdraw_fee_ratio: i128,
-    pub withdraw_fee_receiver: Address,
-    pub eip712_domain_name: String,
-    pub eip712_domain_version: String,
-}
-
-/// Initialization trait
-pub trait VaultInitialization {
-    /// Initialize contract
-    fn initialize(
-        env: Env,
-        admin: Address,
-        minter_manager: Address,
-        token_contract: Address,
-        oracle: Address,
-        treasurer: Address,
-        withdraw_verifier: Address,
-        withdraw_fee_ratio: i128,
-        withdraw_fee_receiver: Address,
-        eip712_domain_name: String,
-        eip712_domain_version: String,
-    );
-
-    /// Initialize contract with config (convenience method)
-    fn initialize_with_config(env: Env, config: InitializeConfig) {
-        Self::initialize(
-            env,
-            config.admin,
-            config.minter_manager,
-            config.token_contract,
-            config.oracle,
-            config.treasurer,
-            config.withdraw_verifier,
-            config.withdraw_fee_ratio,
-            config.withdraw_fee_receiver,
-            config.eip712_domain_name,
-            config.eip712_domain_version,
-        );
-    }
-}
 
 // ==================== Event Definitions ====================
 
@@ -204,8 +147,6 @@ pub trait VaultInitialization {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DepositEvent {
-    pub user: Address,
-    pub currency: Address,
     pub amount: i128,
     pub minted_tokens: i128,
     pub nav: i128,
@@ -215,21 +156,15 @@ pub struct DepositEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WithdrawEvent {
-    pub from: Address,
-    pub shares: i128,
-    pub gross_amount: i128,
-    pub fee_amount: i128,
-    pub actual_amount: i128,
-    pub nav: i128,
-    pub request_hash: Bytes,
+    pub amount: i128,
+    pub timestamp: u64,
 }
 
 /// Currency added event
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CurrencyAddedEvent {
-    pub admin: Address,
-    pub currency: Address,
+pub struct SetAllowedCurrencyEvent {
+    pub allowed: bool,
 }
 
 /// Currency removed event
@@ -237,5 +172,21 @@ pub struct CurrencyAddedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CurrencyRemovedEvent {
     pub admin: Address,
-    pub currency: Address,
+}
+
+
+/// Withdraw request event
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WithdrawRequestEvent {
+    pub shares: i128,
+    pub request_hash: Bytes,
+    pub nav: i128,
+}
+
+/// Treasurer deposit event
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasurerDepositEvent {
+    pub amount: i128,
 }
