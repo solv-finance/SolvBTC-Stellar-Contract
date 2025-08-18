@@ -278,7 +278,7 @@ fn test_basic_initialize_success() {
     // Verify initialization
     assert!(client.is_initialized());
     assert_eq!(client.admin(), config.admin);
-    // minter_manager 已移除
+    // minter_manager 
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
     assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
@@ -300,7 +300,7 @@ fn test_initialize_with_default_config() {
     // Verify initialization
     assert!(client.is_initialized());
     assert_eq!(client.admin(), config.admin);
-    // minter_manager 已移除
+    // minter_manager 
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
     assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
@@ -317,7 +317,6 @@ fn test_initialize_with_custom_config() {
     // Create custom configuration - only modify needed parameters
     let custom_admin = Address::generate(&env);
     let _config = create_custom_init_config(&env, Some(custom_admin.clone()), Some(200));
-    // constructor-only：默认值仍为 100，这里改为通过 setter 验证
     client.set_withdraw_fee_ratio_by_admin(&200);
     assert_eq!(client.get_withdraw_fee_ratio(), 200);
     client.set_oracle_by_admin(&Address::generate(&env));
@@ -357,7 +356,7 @@ fn test_config_vs_traditional_initialization() {
     assert!(client1.is_initialized());
     assert!(client2.is_initialized());
     
-    // Both should have same basic functionality (constructor 默认 100)
+    // Both should have same basic functionality (constructor 100)
     assert_eq!(client1.get_withdraw_fee_ratio(), 100);
     assert_eq!(client2.get_withdraw_fee_ratio(), 100);
 }
@@ -1213,7 +1212,7 @@ fn test_initialize_with_config_function() {
 
     let (client, _) = create_vault_contract(&env);
     let _config = read_config_from_chain(&env, &client);
-    // constructor-only：用 setter 验证接口存在
+    // constructor-only: use setter to verify interface exists
     let new_oracle = Address::generate(&env);
     client.set_oracle_by_admin(&new_oracle);
     assert_eq!(client.get_oracle(), new_oracle);
@@ -1260,7 +1259,7 @@ fn test_zero_fee_ratio_initialization() {
 
     let (client, _) = create_vault_contract(&env);
     let config = create_custom_init_config(&env, None, Some(0));
-    // constructor 默认 100，通过 setter 设置为 0 后断言
+    // constructor 100, set to 0 by setter
     client.set_withdraw_fee_ratio_by_admin(&0);
     assert_eq!(client.get_withdraw_fee_ratio(), 0);
 }
@@ -1273,7 +1272,7 @@ fn test_maximum_fee_ratio_initialization() {
 
     let (client, _) = create_vault_contract(&env);
     let _ = create_custom_init_config(&env, None, Some(10000)); // 100%
-    // 使用 setter 设置最大费率并断言
+    // set to 10000 by setter
     client.set_withdraw_fee_ratio_by_admin(&10000);
     assert_eq!(client.get_withdraw_fee_ratio(), 10000);
 }
@@ -1968,7 +1967,7 @@ fn test_eip712_domain_comprehensive() {
     
     let (client, _) = create_vault_contract(&env);
     
-    // 默认 constructor 域名
+    // constructor domain name
     assert_eq!(client.get_eip712_domain_name(), String::from_str(&env, "Solv Vault Withdraw"));
     assert_eq!(client.get_eip712_domain_version(), String::from_str(&env, "1"));
     

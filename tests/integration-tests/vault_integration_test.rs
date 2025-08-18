@@ -156,26 +156,12 @@ impl VaultTestEnv {
         SolvBTCVaultClient::new(&self.env, &self.vault_addr)
     }
 
-    /// Initialize all contracts
-    fn initialize_contracts(&self) {
-        // Tokens 已在注册时通过构造函数完成初始化，这里无需再次调用 initialize
-
-        // Oracle 已通过构造函数初始化
-
-        // 1. Vault 已通过构造函数初始化（包含 EIP712 域参数）
-        // Oracle 合约设置 Vault 地址
-        self.get_oracle_client().set_vault_by_admin(&self.vault_addr);
-
-        // Set EIP712 domain info to match test expectations
-        // domain setter removed; keep defaults
-    }
 
     /// Set contract relationships
     fn setup_relationships(&self) {
-        // 1. 授权合约权限
-        // 1.1 SolvBTC：Vault 需要作为 minter 铸造份额
+        // 1.1 SolvBTC: Vault needs to be a minter to mint shares
         self.get_solvbtc_token_client().add_minter_by_admin(&self.vault_addr);
-        // 1.2 WBTC：测试中由 admin 铸造用于充值的 WBTC
+        // 1.2 WBTC: admin mints WBTC for deposits in test
         self.get_wbtc_token_client().add_minter_by_admin(&self.admin);
 
         // 2. Set NAV manager in Oracle
@@ -193,7 +179,6 @@ impl VaultTestEnv {
         self.get_vault_client()
             .set_withdraw_fee_recv_by_admin(&fee_receiver);
 
-        // 6. 其余权限已设置完毕
     }
 
     /// Mint test WBTC to user
@@ -484,7 +469,7 @@ fn test_complete_vault_deposit_flow() {
 
     // 2. Initialize all contracts
     println!("Initializing all contracts...");
-    test_env.initialize_contracts();
+    
 
     // 3. Set contract relationships
     println!("Setting contract relationships...");
@@ -570,7 +555,7 @@ fn test_complete_vault_deposit_flow() {
 #[test]
 fn test_vault_query_functions() {
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     let vault_client = test_env.get_vault_client();
@@ -598,7 +583,7 @@ fn test_vault_query_functions() {
 #[test]
 fn test_different_nav_values() {
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     let deposit_amount = 50_000_000i128; // 0.5 WBTC
@@ -650,7 +635,7 @@ fn test_complete_vault_withdraw_flow() {
 
     // 2. Initialize all contracts
     println!("Initializing all contracts...");
-    test_env.initialize_contracts();
+    
 
     // 3. Set contract relationships
     println!("Setting contract relationships...");
@@ -799,7 +784,7 @@ fn test_withdraw_error_scenarios() {
     println!("Starting Vault withdraw error scenario test");
 
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     let vault_client = test_env.get_vault_client();
@@ -863,7 +848,7 @@ fn test_withdraw_signature_validation_structure() {
     println!("Starting Vault withdraw signature validation structure test");
 
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     // 1. Prepare test data
@@ -980,7 +965,7 @@ fn test_withdraw_with_invalid_signature_should_panic() {
     println!("Starting test invalid signature should cause panic");
 
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     // Prepare test data - first deposit
@@ -1021,7 +1006,7 @@ fn test_withdraw_with_real_signature_success() {
     println!("Starting test using real signature successful withdrawal process");
 
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     // Print verifier address and public key information
@@ -1169,7 +1154,7 @@ fn test_deposit_operation_comprehensive() {
     println!("Starting comprehensive deposit operation test");
 
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     // Set withdraw fee receiver (deposit functionality requires this configuration)
@@ -1269,7 +1254,7 @@ fn test_treasurer_deposit_operation() {
     println!("Starting treasurer deposit operation test");
 
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     // Test treasurer deposit operations
@@ -1331,7 +1316,7 @@ fn test_withdraw_request_operation() {
     println!("Starting withdraw request operation test");
 
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     // Set withdraw fee receiver
@@ -1413,7 +1398,7 @@ fn test_complete_withdraw_operation_flow() {
     println!("Starting complete withdraw operation flow test");
 
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     // Set withdraw fee receiver
@@ -1557,7 +1542,7 @@ fn test_all_four_operations_integration() {
     println!("Starting all four operations integration test");
 
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     // Set withdraw fee receiver
@@ -1674,7 +1659,7 @@ fn test_simplified_deposit_without_nav() {
     println!("Starting simplified deposit test without NAV setting");
 
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     // Set withdraw fee receiver (deposit functionality requires this configuration)
@@ -1755,7 +1740,7 @@ fn test_simplified_treasurer_deposit() {
     println!("Starting simplified treasurer deposit test");
 
     let test_env = VaultTestEnv::new();
-    test_env.initialize_contracts();
+    
     test_env.setup_relationships();
 
     // Test treasurer deposit operation
@@ -1808,24 +1793,6 @@ fn test_vault_initialization_with_config() {
     let fee_receiver = Address::generate(&env);
 
     // Deploy vault contract (constructor-based)
-    let (vault_addr, _) = create_vault(
-        &env,
-        &admin,
-        &token_contract,
-        &oracle,
-        &treasurer,
-        &withdraw_verifier,
-        150,
-        150,
-        &fee_receiver,
-        &token_contract, // Use token as withdraw currency
-    );
-    let vault_client = SolvBTCVaultClient::new(&env, &vault_addr);
-    // domain setter removed; keep defaults
-
-    // 使用构造函数重新部署一个带配置的 Vault
-    let config_name = String::from_str(&env, "SolvBTC-Integration");
-    let config_ver = String::from_str(&env, "2");
     let (vault_addr_cfg, _) = create_vault(
         &env,
         &admin,
