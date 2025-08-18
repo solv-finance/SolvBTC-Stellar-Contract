@@ -1,8 +1,7 @@
 import pkg from '@stellar/stellar-sdk';
 const { Keypair } = pkg;
 import { CONFIG } from './config.js';
-import { createHash, randomBytes } from 'crypto'; // Add this line
-import { ResourceUsageClient } from "@57block/stellar-resource-usage";
+import { randomBytes } from 'crypto'; // Add this line
 
 
 // Import contract bindings
@@ -11,7 +10,7 @@ import * as vaultModule from '../../js-bindings/vault/dist/index.js';
 import * as oracleModule from '../../js-bindings/oracle/dist/index.js';
 import * as minterManagerModule from '../../js-bindings/minter-manager/dist/index.js';
 
-import { generateWithdrawSignature, getDomainSeparator, getDomainName, getDomainVersion, getChainId } from './signature-utils.mjs';
+import { generateWithdrawSignature } from './signature-utils.mjs';
 
 // Initialize SDK client
 export class StellarContractClient {

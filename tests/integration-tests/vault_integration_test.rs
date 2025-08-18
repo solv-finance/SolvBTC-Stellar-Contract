@@ -20,10 +20,17 @@ pub fn create_fungible_token<'a>(
     symbol: &'a str,
     decimals: u32,
 ) -> (Address, FungibleTokenContractClient<'a>) {
+    // For integration tests, we can use admin for all roles for simplicity
+    // In production, these should be different addresses
+    let minter_manager = admin.clone();
+    let blacklist_manager = admin.clone();
+    
     let contract_id = env.register(
         FungibleTokenContract,
         (
             admin,
+            &minter_manager,
+            &blacklist_manager,
             String::from_str(env, name),
             String::from_str(env, symbol),
             decimals,
@@ -160,9 +167,9 @@ impl VaultTestEnv {
     /// Set contract relationships
     fn setup_relationships(&self) {
         // 1.1 SolvBTC: Vault needs to be a minter to mint shares
-        self.get_solvbtc_token_client().add_minter_by_admin(&self.vault_addr);
+        self.get_solvbtc_token_client().add_minter_by_manager(&self.vault_addr);
         // 1.2 WBTC: admin mints WBTC for deposits in test
-        self.get_wbtc_token_client().add_minter_by_admin(&self.admin);
+        self.get_wbtc_token_client().add_minter_by_manager(&self.admin);
 
         // 2. Set NAV manager in Oracle
         self.get_oracle_client().set_nav_manager_by_admin(&self.admin);

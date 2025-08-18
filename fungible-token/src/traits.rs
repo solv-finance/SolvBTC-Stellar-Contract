@@ -1,4 +1,4 @@
-use soroban_sdk::{contractclient, Address, Env, Vec};
+use soroban_sdk::{Address, Env, Vec};
 
 // 1. Mintable functionality trait 
 pub trait MintableToken {
@@ -23,11 +23,11 @@ pub trait BlacklistTrait {
 
 // 3. Minter management functionality trait
 pub trait MinterManagementTrait {
-    /// Add minter by admin (admin only)
-    fn add_minter_by_admin(env: Env, minter: Address);
+    /// Add minter by manager (minter manager role only)
+    fn add_minter_by_manager(env: Env, minter: Address);
 
-    /// Remove minter by admin (admin only)
-    fn remove_minter_by_admin(env: Env, minter: Address);
+    /// Remove minter by manager (minter manager role only)
+    fn remove_minter_by_manager(env: Env, minter: Address);
 
     /// Get all minters
     fn get_minters(env: Env) -> Vec<Address>;

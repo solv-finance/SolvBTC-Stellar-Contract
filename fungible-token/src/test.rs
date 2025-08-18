@@ -14,11 +14,45 @@ fn create_and_init_token<'a>(
     symbol: &'a str,
     decimals: u32,
 ) -> FungibleTokenContractClient<'a> {
+    // For testing, we can use the same admin for all roles, 
+    // but in production, these should be different addresses
+    let minter_manager = admin.clone();
+    let blacklist_manager = admin.clone();
+    
     // Register contract with constructor arguments
     let contract_address = env.register(
         FungibleTokenContract, 
         (
             admin,
+            &minter_manager,
+            &blacklist_manager,
+            String::from_str(env, name),
+            String::from_str(env, symbol),
+            decimals,
+        )
+    );
+    let client = FungibleTokenContractClient::new(env, &contract_address);
+    
+    client
+}
+
+// Helper function to create token with specific role addresses
+fn create_and_init_token_with_roles<'a>(
+    env: &'a Env,
+    admin: &'a Address,
+    minter_manager: &'a Address,
+    blacklist_manager: &'a Address,
+    name: &'a str,
+    symbol: &'a str,
+    decimals: u32,
+) -> FungibleTokenContractClient<'a> {
+    // Register contract with all role addresses specified
+    let contract_address = env.register(
+        FungibleTokenContract, 
+        (
+            admin,
+            minter_manager,
+            blacklist_manager,
             String::from_str(env, name),
             String::from_str(env, symbol),
             decimals,
@@ -305,18 +339,30 @@ fn test_new_owner_can_manage_contract() {
     }]);
     client.accept_ownership();
 
-    // New owner should be able to manage the contract
+    // Set new owner as minter manager 
+    env.mock_auths(&[MockAuth {
+        address: &new_owner,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "set_minter_manager",
+            args: (&new_owner,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.set_minter_manager(&new_owner);
+
+    // Now new owner should be able to manage minters
     let minter = Address::generate(&env);
     env.mock_auths(&[MockAuth {
         address: &new_owner,
         invoke: &MockAuthInvoke {
             contract: &client.address,
-            fn_name: "add_minter_by_admin",
+            fn_name: "add_minter_by_manager",
             args: (&minter,).into_val(&env),
             sub_invokes: &[],
         },
     }]);
-    client.add_minter_by_admin(&minter);
+    client.add_minter_by_manager(&minter);
 
     // Verify minter was added
     assert!(client.is_minter(&minter));
@@ -397,9 +443,9 @@ fn test_minter_management_and_mint_flow() {
 	// add minter by owner
 	env.mock_auths(&[MockAuth {
 		address: &owner,
-		invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] },
+		invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] },
 	}]);
-	client.add_minter_by_admin(&minter);
+	client.add_minter_by_manager(&minter);
 	assert!(client.is_minter(&minter));
 
 	// mint by minter to user
@@ -412,8 +458,8 @@ fn test_minter_management_and_mint_flow() {
 	assert_eq!(client.total_supply(), 100);
 
 	// remove minter by owner
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "remove_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.remove_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "remove_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.remove_minter_by_manager(&minter);
 	assert!(!client.is_minter(&minter));
 }
 
@@ -439,8 +485,8 @@ fn test_mint_from_invalid_amount_should_panic() {
 	let minter = Address::generate(&env);
 	let client = create_and_init_token(&env, &owner, "MT", "MT", 7);
 
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 	env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &user, &0i128).into_val(&env), sub_invokes: &[] } }]);
 	client.mint_from(&minter, &user, &0);
 }
@@ -458,8 +504,8 @@ fn test_too_many_minters_and_duplicate_and_remove_nonexistent() {
 
 	// add 10 minters
 	for addr in minters.iter() {
-		env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&addr,).into_val(&env), sub_invokes: &[] } }]);
-		client.add_minter_by_admin(&addr);
+		env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&addr,).into_val(&env), sub_invokes: &[] } }]);
+		client.add_minter_by_manager(&addr);
 	}
 	assert_eq!(client.get_minters().len(), 10);
 }
@@ -471,10 +517,10 @@ fn test_add_duplicate_minter_should_panic() {
 	let owner = Address::generate(&env);
 	let client = create_and_init_token(&env, &owner, "MT", "MT", 7);
 	let addr = Address::generate(&env);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&addr,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&addr);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&addr,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&addr);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&addr,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&addr);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&addr,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&addr);
 }
 
 #[test]
@@ -485,12 +531,12 @@ fn test_add_eleventh_minter_should_panic() {
 	let client = create_and_init_token(&env, &owner, "MT", "MT", 7);
 	for _ in 0..10 {
 		let addr = Address::generate(&env);
-		env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&addr,).into_val(&env), sub_invokes: &[] } }]);
-		client.add_minter_by_admin(&addr);
+		env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&addr,).into_val(&env), sub_invokes: &[] } }]);
+		client.add_minter_by_manager(&addr);
 	}
 	let eleventh = Address::generate(&env);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&eleventh,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&eleventh);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&eleventh,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&eleventh);
 }
 
 #[test]
@@ -500,8 +546,8 @@ fn test_remove_nonexistent_minter_should_panic() {
 	let owner = Address::generate(&env);
 	let client = create_and_init_token(&env, &owner, "MT", "MT", 7);
 	let nonexistent = Address::generate(&env);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "remove_minter_by_admin", args: (&nonexistent,).into_val(&env), sub_invokes: &[] } }]);
-	client.remove_minter_by_admin(&nonexistent);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "remove_minter_by_manager", args: (&nonexistent,).into_val(&env), sub_invokes: &[] } }]);
+	client.remove_minter_by_manager(&nonexistent);
 }
 
 #[test]
@@ -552,8 +598,8 @@ fn test_blacklist_blocks_mint_and_transfer_and_burn_admin() {
 	// owner set mgr and add minter
 	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "set_blacklist_manager", args: (&mgr,).into_val(&env), sub_invokes: &[] } }]);
 	client.set_blacklist_manager(&mgr);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 
 	// mint to a
 	env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &a, &200i128).into_val(&env), sub_invokes: &[] } }]);
@@ -577,8 +623,8 @@ fn test_transfer_from_blacklisted_should_panic() {
     let minter = Address::generate(&env);
 	let client = create_and_init_token(&env, &owner, "BT", "BT", 7);
 	client.set_blacklist_manager(&mgr);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 	env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &a, &10i128).into_val(&env), sub_invokes: &[] } }]);
 	client.mint_from(&minter, &a, &10);
 	env.mock_auths(&[MockAuth { address: &mgr, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_to_blacklist", args: (&mgr, &a).into_val(&env), sub_invokes: &[] } }]);
@@ -596,8 +642,8 @@ fn test_mint_to_blacklisted_should_panic() {
     let minter = Address::generate(&env);
 	let client = create_and_init_token(&env, &owner, "BT", "BT", 7);
 	client.set_blacklist_manager(&mgr);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 	env.mock_auths(&[MockAuth { address: &mgr, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_to_blacklist", args: (&mgr, &a).into_val(&env), sub_invokes: &[] } }]);
 	client.add_to_blacklist(&mgr, &a);
 	env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &a, &1i128).into_val(&env), sub_invokes: &[] } }]);
@@ -614,8 +660,8 @@ fn test_transfer_and_transfer_from_with_approve_and_burn() {
 
     // mint to user via adding a minter
     let minter = Address::generate(&env);
-    env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-    client.add_minter_by_admin(&minter);
+    env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+    client.add_minter_by_manager(&minter);
     env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &user, &150i128).into_val(&env), sub_invokes: &[] } }]);
     client.mint_from(&minter, &user, &150);
     assert_eq!(client.balance(&user), 150);
@@ -645,8 +691,8 @@ fn test_paused_blocks_transfer() {
 	let b = Address::generate(&env);
     let minter = Address::generate(&env);
 	let client = create_and_init_token(&env, &owner, "PZ", "PZ", 7);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 	env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &a, &100i128).into_val(&env), sub_invokes: &[] } }]);
 	client.mint_from(&minter, &a, &100);
 	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "pause", args: (&owner,).into_val(&env), sub_invokes: &[] } }]);
@@ -662,8 +708,8 @@ fn test_paused_blocks_mint() {
 	let a = Address::generate(&env);
     let minter = Address::generate(&env);
 	let client = create_and_init_token(&env, &owner, "PZ", "PZ", 7);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "pause", args: (&owner,).into_val(&env), sub_invokes: &[] } }]);
 	client.pause(&owner);
 	env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &a, &10i128).into_val(&env), sub_invokes: &[] } }]);
@@ -678,8 +724,8 @@ fn test_paused_blocks_burn() {
 	let a = Address::generate(&env);
     let minter = Address::generate(&env);
 	let client = create_and_init_token(&env, &owner, "PZ", "PZ", 7);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 	env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &a, &10i128).into_val(&env), sub_invokes: &[] } }]);
 	client.mint_from(&minter, &a, &10);
 	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "pause", args: (&owner,).into_val(&env), sub_invokes: &[] } }]);
@@ -729,8 +775,8 @@ fn test_add_minter_unauthorized_should_panic() {
 	let not_owner = Address::generate(&env);
     let minter = Address::generate(&env);
 	let client = create_and_init_token(&env, &owner, "MM", "MM", 7);
-	env.mock_auths(&[MockAuth { address: &not_owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &not_owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 }
 
 #[test]
@@ -743,12 +789,12 @@ fn test_remove_minter_unauthorized_should_panic() {
 	let client = create_and_init_token(&env, &owner, "MM", "MM", 7);
 
 	// owner add first
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 
 	// not owner remove should panic
-	env.mock_auths(&[MockAuth { address: &not_owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "remove_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.remove_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &not_owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "remove_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.remove_minter_by_manager(&minter);
 }
 
 #[test]
@@ -800,8 +846,8 @@ fn test_transfer_from_blacklisted_spender_should_panic() {
 
 	// mint to user
 	let minter = Address::generate(&env);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 	env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &user, &10i128).into_val(&env), sub_invokes: &[] } }]);
 	client.mint_from(&minter, &user, &10);
 
@@ -827,8 +873,8 @@ fn test_burn_from_with_allowance() {
 
 	// mint to user
 	let minter = Address::generate(&env);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 	env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &user, &20i128).into_val(&env), sub_invokes: &[] } }]);
 	client.mint_from(&minter, &user, &20);
 
@@ -866,8 +912,8 @@ fn test_unpause_resumes_operations() {
 	let client = create_and_init_token(&env, &owner, "UP", "UP", 7);
 
 	// mint to a and pause then unpause
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 	env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &a, &10i128).into_val(&env), sub_invokes: &[] } }]);
 	client.mint_from(&minter, &a, &10);
 	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "pause", args: (&owner,).into_val(&env), sub_invokes: &[] } }]);
@@ -892,8 +938,8 @@ fn test_mint_from_negative_amount_should_panic() {
     let user = Address::generate(&env);
 	let minter = Address::generate(&env);
 	let client = create_and_init_token(&env, &owner, "NEG", "NEG", 7);
-	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_admin", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
-	client.add_minter_by_admin(&minter);
+	env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+	client.add_minter_by_manager(&minter);
 	env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &user, &(-1i128)).into_val(&env), sub_invokes: &[] } }]);
 	client.mint_from(&minter, &user, &-1);
 }

@@ -30,6 +30,8 @@ pub enum DataKey {
     BlackListAddress(Address),
     // Blacklist manager
     BlacklistManager,
+    // Minter manager
+    MinterManager,
 }
 
 // Contract error types
@@ -74,6 +76,8 @@ impl FungibleTokenContract {
     pub fn __constructor(
         env: &Env,
         admin: Address,
+        minter_manager: Address,
+        blacklist_manager: Address,
         name: String,
         symbol: String,
         decimals: u32,
@@ -88,10 +92,15 @@ impl FungibleTokenContract {
         let minters: Map<Address, i128> = Map::new(env);
         env.storage().instance().set(&DataKey::Minters, &minters);
 
-        // Set admin as the blacklist manager
+        // Set the blacklist manager
         env.storage()
             .instance()
-            .set(&DataKey::BlacklistManager, &admin);
+            .set(&DataKey::BlacklistManager, &blacklist_manager);
+
+        // Set the minter manager  
+        env.storage()
+            .instance()
+            .set(&DataKey::MinterManager, &minter_manager);
 
         // Publish initialization event
         env.events().publish(
@@ -256,8 +265,15 @@ impl BlacklistTrait for FungibleTokenContract {
 
 #[contractimpl]
 impl MinterManagementTrait for FungibleTokenContract {
-    #[only_owner]
-    fn add_minter_by_admin(env: Env, minter: Address) {
+    fn add_minter_by_manager(env: Env, minter: Address) {
+        // Get minter manager and require authorization
+        let manager: Option<Address> = env.storage()
+            .instance()
+            .get(&DataKey::MinterManager);
+        
+        let manager_addr = manager.unwrap_or_else(|| panic_with_error!(&env, TokenError::Unauthorized));
+        manager_addr.require_auth();
+        
         // Get current minters mapping
         let mut minters: Map<Address, i128> =
             env.storage().instance().get(&DataKey::Minters).unwrap();
@@ -279,12 +295,19 @@ impl MinterManagementTrait for FungibleTokenContract {
         // Publish add minter event
         env.events().publish(
             (Symbol::new(&env, "minter_added"), minter.clone()),
-            (ownable::get_owner(&env)),
+            manager_addr,
         );
     }
     
-    #[only_owner]
-    fn remove_minter_by_admin(env: Env, minter: Address) {
+    fn remove_minter_by_manager(env: Env, minter: Address) {
+        // Get minter manager and require authorization
+        let manager: Option<Address> = env.storage()
+            .instance()
+            .get(&DataKey::MinterManager);
+        
+        let manager_addr = manager.unwrap_or_else(|| panic_with_error!(&env, TokenError::Unauthorized));
+        manager_addr.require_auth();
+        
         // Get current minters mapping
         let mut minters: Map<Address, i128> =
             env.storage().instance().get(&DataKey::Minters).unwrap();
@@ -301,7 +324,7 @@ impl MinterManagementTrait for FungibleTokenContract {
         // Publish remove minter event
         env.events().publish(
             (Symbol::new(&env, "minter_removed"), minter.clone()),
-            (ownable::get_owner(&env)),
+            manager_addr,
         );
     }
     
@@ -340,6 +363,19 @@ impl FungibleTokenContract {
         );
     }
 
+    /// Set minter manager to a new address (owner only)
+    #[only_owner]
+    pub fn set_minter_manager(env: Env, new_manager: Address) {
+        env.storage()
+            .instance()
+            .set(&DataKey::MinterManager, &new_manager);
+        
+        env.events().publish(
+            (Symbol::new(&env, "minter_manager_changed"), new_manager.clone()),
+            (ownable::get_owner(&env)),
+        );
+    }
+
 
     /// Check if an address is the blacklist manager
     pub fn is_blacklist_manager(env: Env, address: Address) -> bool {
@@ -354,6 +390,21 @@ impl FungibleTokenContract {
         env.storage()
             .instance()
             .get(&DataKey::BlacklistManager)
+    }
+
+    /// Check if an address is the minter manager
+    pub fn is_minter_manager(env: Env, address: Address) -> bool {
+        let manager: Option<Address> = env.storage()
+            .instance()
+            .get(&DataKey::MinterManager);
+        manager == Some(address)
+    }
+
+    /// Get the current minter manager address
+    pub fn get_minter_manager(env: Env) -> Option<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::MinterManager)
     }
 
 
@@ -392,7 +443,6 @@ impl FungibleTokenContract {
             panic_with_error!(env, TokenError::Unauthorized);
         }
     }
-
 
 
     // Validate minter permissions
