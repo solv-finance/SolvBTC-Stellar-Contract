@@ -180,15 +180,12 @@ impl FungibleBurnable for FungibleTokenContract {
     #[when_not_paused]
     fn burn(env: &Env, from: Address, amount: i128) {
         // SEP-41 standard: user can burn their own tokens
-        Self::require_not_blacklisted(env, &from);
         Base::burn(env, &from, amount);
     }
 
     #[when_not_paused]
     fn burn_from(env: &Env, spender: Address, from: Address, amount: i128) {
         // SEP-41 standard: burn using allowance mechanism
-        Self::require_not_blacklisted(env, &from);
-        Self::require_not_blacklisted(env, &spender);
         Base::burn_from(env, &spender, &from, amount);
     }
 }
@@ -238,7 +235,7 @@ impl BlacklistTrait for FungibleTokenContract {
         Self::remove_blacklist(&env, &address);
 
         // Publish blacklist removal event
-        env.events().publish((Symbol::new(&env, "blacklist_remove"), address.clone()), (from));
+        env.events().publish((Symbol::new(&env, "blacklist_remove"), address.clone()), from);
     }
 
     fn is_blacklisted(env: Env, address: Address) -> bool {
@@ -253,12 +250,18 @@ impl BlacklistTrait for FungibleTokenContract {
             panic_with_error!(&env, TokenError::InvalidArgument);
         }
         
-        // Burn all tokens of the blacklisted address
-        Base::burn_from(&env, &env.current_contract_address(), &address, Base::balance(&env, &address));
+        // Get current balance
+        let balance = Base::balance(&env, &address);
+        if balance > 0 {
+            // Use our custom burn function that bypasses authorization
+            Self::admin_burn_tokens(&env, &address, balance);
+        }
 
-        // Publish burn event
-        env.events().publish((Symbol::new(&env, "burn_blacklisted_tokens_by_admin"), address.clone()), (ownable::get_owner(&env)));
+        // Publish admin burn event
+        env.events().publish((Symbol::new(&env, "burn_blacklisted_tokens_by_admin"), address.clone()), ownable::get_owner(&env));
     }
+
+
 }
 
 // ==================== Minter Management Functionality Implementation ====================
@@ -359,7 +362,7 @@ impl FungibleTokenContract {
         
         env.events().publish(
             (Symbol::new(&env, "blacklist_manager_changed"), new_manager.clone()),
-            (ownable::get_owner(&env)),
+            ownable::get_owner(&env),
         );
     }
 
@@ -372,7 +375,7 @@ impl FungibleTokenContract {
         
         env.events().publish(
             (Symbol::new(&env, "minter_manager_changed"), new_manager.clone()),
-            (ownable::get_owner(&env)),
+            ownable::get_owner(&env),
         );
     }
 
@@ -474,6 +477,20 @@ impl FungibleTokenContract {
             .instance()
             .get(&DataKey::BlackListAddress(address.clone()))
             .unwrap_or(false)
+    }
+
+    // Admin burn function that bypasses authorization checks
+    // Uses OpenZeppelin's Base::update() directly to avoid require_auth()
+    fn admin_burn_tokens(env: &Env, from: &Address, amount: i128) {
+        // Use OpenZeppelin's update function directly, bypassing authorization
+        // Base::update(e, Some(from), None, amount) handles burning when 'to' is None
+        Base::update(env, Some(from), None, amount);
+
+        // Publish burn event using OpenZeppelin's standard event format
+        env.events().publish(
+            (Symbol::new(env, "burn_blacklisted_tokens_by_admin"), from.clone()),
+            amount,
+        );
     }
 }
 // Generate the TokenInterface implementation using OpenZeppelin macro

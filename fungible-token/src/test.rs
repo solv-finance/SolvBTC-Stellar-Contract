@@ -903,6 +903,39 @@ fn test_burn_blacklisted_tokens_by_admin_not_blacklisted_should_panic() {
 }
 
 #[test]
+fn test_admin_burn_bypasses_authorization() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let user = Address::generate(&env);
+    let client = create_and_init_token(&env, &owner, "BURN", "BURN", 8);
+
+    // Mint tokens to user first
+    let minter = Address::generate(&env);
+    env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_minter_by_manager", args: (&minter,).into_val(&env), sub_invokes: &[] } }]);
+    client.add_minter_by_manager(&minter);
+    
+    env.mock_auths(&[MockAuth { address: &minter, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "mint_from", args: (&minter, &user, &100i128).into_val(&env), sub_invokes: &[] } }]);
+    client.mint_from(&minter, &user, &100);
+    
+    assert_eq!(client.balance(&user), 100);
+    assert_eq!(client.total_supply(), 100);
+
+    // Add user to blacklist
+    env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "add_to_blacklist", args: (&owner, &user).into_val(&env), sub_invokes: &[] } }]);
+    client.add_to_blacklist(&owner, &user);
+
+    // Admin burns all tokens without any user authorization
+    env.mock_auths(&[MockAuth { address: &owner, invoke: &MockAuthInvoke { contract: &client.address, fn_name: "burn_blacklisted_tokens_by_admin", args: (&user,).into_val(&env), sub_invokes: &[] } }]);
+    client.burn_blacklisted_tokens_by_admin(&user);
+
+    // Verify tokens were burned
+    assert_eq!(client.balance(&user), 0);
+    assert_eq!(client.total_supply(), 0);
+}
+
+
+
+#[test]
 fn test_unpause_resumes_operations() {
     let env = Env::default();
 	let owner = Address::generate(&env);
