@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node test/integration-test-fixed.mjs",
+    "test:multi-vault": "node test/multi-vault-test.mjs",
+    "test:bindings": "node test/bindings-complete-test.mjs",
+    "test:real": "node test/real-testnet-test.mjs",
+    "test:all": "npm run test && npm run test:multi-vault && npm run test:bindings",
     "build": "echo \"Building js-client...\" && echo \"No TypeScript compilation needed for this project\""
   },
   "keywords": [],

@@ -1,6 +1,6 @@
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error,
-    Address, Env, String, Symbol, Vec, Map,
+    Address, BytesN, Env, String, Symbol, Vec, Map,
 };
 use stellar_fungible::{
     burnable::FungibleBurnable, impl_token_interface, Base, FungibleToken
@@ -47,22 +47,18 @@ pub enum TokenError {
     InsufficientBalance = 152,
     // Invalid argument
     InvalidArgument = 153,
-    // Contract already initialized
-    AlreadyInitialized = 154,
-    // Contract not initialized
-    NotInitialized = 155,
     // Invalid address
-    InvalidAddress = 156,
+    InvalidAddress = 154,
     // Amount must be positive
-    InvalidAmount = 157,
+    InvalidAmount = 155,
     // Address is blacklisted
-    AddressBlacklisted = 158,
+    AddressBlacklisted = 156,
     // Maximum number of minters reached
-    TooManyMinters = 159,
+    TooManyMinters = 157,
     // Minter not found
-    MinterNotFound = 160,
+    MinterNotFound = 158,
     // Minter already exists
-    MinterAlreadyExists = 161,
+    MinterAlreadyExists = 159,
 }
 
 // FungibleToken contract
@@ -73,6 +69,12 @@ pub struct FungibleTokenContract;
 
 #[contractimpl]
 impl FungibleTokenContract {
+    /// Upgrade contract with new WASM hash
+    #[only_owner]
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+    
     pub fn __constructor(
         env: &Env,
         admin: Address,
@@ -410,6 +412,12 @@ impl FungibleTokenContract {
             .get(&DataKey::MinterManager)
     }
 
+    /// Get the current admin address
+    pub fn get_admin(env: Env) -> Address {
+        // Use the ownable trait to get owner
+        // ownable::get_owner returns Option<Address>, unwrap it
+        ownable::get_owner(&env).unwrap()
+    }
 
 }
 
@@ -486,11 +494,6 @@ impl FungibleTokenContract {
         // Base::update(e, Some(from), None, amount) handles burning when 'to' is None
         Base::update(env, Some(from), None, amount);
 
-        // Publish burn event using OpenZeppelin's standard event format
-        env.events().publish(
-            (Symbol::new(env, "burn_blacklisted_tokens_by_admin"), from.clone()),
-            amount,
-        );
     }
 }
 // Generate the TokenInterface implementation using OpenZeppelin macro

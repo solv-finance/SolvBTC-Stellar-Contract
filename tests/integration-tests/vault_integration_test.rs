@@ -1,6 +1,6 @@
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String};
+use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env, String};
 
 // Direct contract implementation imports
 use fungible_token::FungibleTokenContract;
@@ -57,7 +57,7 @@ pub fn create_vault<'a>(
     token_contract: &'a Address,
     oracle: &'a Address,
     treasurer: &'a Address,
-    withdraw_verifier: &'a Address,
+    withdraw_verifier: &'a BytesN<32>,
     deposit_fee_ratio: i128,
     withdraw_fee_ratio: i128,
     withdraw_fee_receiver: &'a Address,
@@ -90,7 +90,7 @@ struct VaultTestEnv {
     admin: Address,
     user: Address,
     treasurer: Address,
-    withdraw_verifier: Address,
+    withdraw_verifier: BytesN<32>,
     // Contract addresses
     solvbtc_token_addr: Address,
     wbtc_token_addr: Address,
@@ -109,12 +109,12 @@ impl VaultTestEnv {
         let user = Address::generate(&env);
         let treasurer = Address::generate(&env);
 
-        // Use the same verifier address as in the contract
-        let verifier_str = String::from_str(
-            &env,
-            "GDX2W2LKRSXXU4GEF3STS4C3JJ2H4XLODOZGWPOVFY4LV5ZJ4PNTXYTW",
-        );
-        let withdraw_verifier = Address::from_string(&verifier_str);
+        // Use a fixed public key for the verifier (32 bytes)
+        // In real usage, this would be the actual ed25519 public key
+        let mut verifier_bytes = [0u8; 32];
+        verifier_bytes[0] = 0xDE; // Sample public key bytes
+        verifier_bytes[1] = 0xAD;
+        let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
 
         // Deploy contracts (using WASM)
         let (solvbtc_token_addr, _) = create_fungible_token(&env, &admin, "SolvBTC Token", "SolvBTC", 18);
@@ -294,31 +294,32 @@ impl VaultTestEnv {
         target_token: &Address,
         nav: i128,
         request_hash: &Bytes,
-        timestamp: u64,
     ) -> Bytes {
         let mut encoded = Bytes::new(&self.env);
 
-        // Add user address - consistent with contract
+        // Add network ID (chain ID)
+        let network_id = self.env.ledger().network_id();
+        encoded.append(&network_id.into());
+        
+        // Add action (fixed as "withdraw")
+        let action_bytes = Bytes::from_slice(&self.env, b"withdraw");
+        encoded.append(&action_bytes);
+
+        // Add user address
         encoded.append(&user_address.clone().to_xdr(&self.env));
 
-        // Add target amount - consistent with contract
-        encoded.append(&Bytes::from_array(&self.env, &target_amount.to_be_bytes()));
-
-        // Add target currency - consistent with contract
+        // Add target currency
+        
         encoded.append(&target_token.clone().to_xdr(&self.env));
 
-        // Use request hash to identify user
-        let user_hash = self.env.crypto().sha256(request_hash);
-        encoded.append(&user_hash.into());
+        // Add target amount (shares)
+        encoded.append(&Bytes::from_array(&self.env, &target_amount.to_be_bytes()));
 
-        // Add NAV value - consistent with contract
+        // Add NAV value
         encoded.append(&Bytes::from_array(&self.env, &nav.to_be_bytes()));
 
-        // Add request hash - consistent with contract
+        // Add request hash
         encoded.append(request_hash);
-
-        // Add timestamp - consistent with contract
-        encoded.append(&Bytes::from_array(&self.env, &timestamp.to_be_bytes()));
 
         encoded
     }
@@ -348,8 +349,7 @@ impl VaultTestEnv {
         target_token: &Address,
         nav: i128,
         request_hash: &Bytes,
-        timestamp: u64,
-    ) -> Bytes {
+    ) -> BytesN<64> {
         println!("Starting signature generation...");
 
         // 1. Create full withdraw message
@@ -359,7 +359,6 @@ impl VaultTestEnv {
             target_token,
             nav,
             request_hash,
-            timestamp,
         );
         Self::debug_print_bytes("Original withdraw message", &withdraw_message);
 
@@ -388,27 +387,18 @@ impl VaultTestEnv {
         }
         println!();
 
-        // 6. Return signed byte
-        let signature_bytes = Bytes::from_array(&self.env, &signature.to_bytes());
-        Self::debug_print_bytes("Generated signature", &signature_bytes);
-
-        signature_bytes
-    }
-
-    /// Create mock Ed25519 public key (32 bytes) - keeping compatibility
-    fn create_mock_public_key(&self) -> Bytes {
-        // Now use real public key
-        self.get_real_public_key()
+        // 6. Return signed byte as BytesN<64>
+        let signature_bytes_n = BytesN::<64>::from_array(&self.env, &signature.to_bytes());
+        signature_bytes_n
     }
 
     /// Create mock Ed25519 signature (64 bytes) - keeping compatibility
-    fn create_mock_signature(&self) -> Bytes {
+    fn create_mock_signature(&self) -> BytesN<64> {
         // To keep backward compatibility, create a simple signature
         let user = Address::generate(&self.env);
         let target_amount = 1000000i128;
         let nav = 100000000i128;
         let request_hash = self.create_request_hash(1);
-        let timestamp = 1700000000u64; // Use fixed timestamp for testing
         let withdraw_currency = self.get_vault_client().get_withdraw_currency().unwrap();
 
         self.sign_vault_withdraw_message(
@@ -417,7 +407,6 @@ impl VaultTestEnv {
             &withdraw_currency,
             nav,
             &request_hash,
-            timestamp,
         )
     }
 
@@ -452,8 +441,7 @@ impl VaultTestEnv {
         target_amount: i128,
         nav: i128,
         request_hash: Bytes,
-        timestamp: u64,
-        signature: Bytes,
+        signature: BytesN<64>,
     ) -> i128 {
         let withdraw_currency = self.get_vault_client().get_withdraw_currency().unwrap();
         self.get_vault_client().withdraw(
@@ -461,7 +449,6 @@ impl VaultTestEnv {
             &target_amount,
             &nav,
             &request_hash,
-            &timestamp,
             &signature,
         )
     }
@@ -568,7 +555,7 @@ fn test_vault_query_functions() {
     let vault_client = test_env.get_vault_client();
 
     // Test query functions
-    let admin = vault_client.admin();
+    let admin = vault_client.get_admin();
     assert_eq!(admin, test_env.admin);
 
     let oracle = vault_client.get_oracle();
@@ -576,9 +563,6 @@ fn test_vault_query_functions() {
 
     let treasurer = vault_client.get_treasurer();
     assert_eq!(treasurer, test_env.treasurer);
-
-    let is_initialized = vault_client.is_initialized();
-    assert!(is_initialized);
 
     // Test currency query
     let is_supported = vault_client.is_currency_supported(&test_env.wbtc_token_addr);
@@ -703,14 +687,12 @@ fn test_complete_vault_withdraw_flow() {
 
     // Prepare withdrawal parameters
     let request_hash = test_env.create_request_hash(1);
-    let timestamp = 1700000000u64; // Use fixed timestamp for testing
     let signature = test_env.create_mock_signature();
 
     println!("Withdrawal parameters:");
     println!("   Target amount: {} WBTC", withdraw_target);
     println!("  NAV value: {}", nav_value);
     println!("   Request hash length: {} bytes", request_hash.len());
-    println!("   Timestamp: {}", timestamp);
     println!("   Signature length: {} bytes", signature.len());
 
     // Note: This will panic due to signature validation failure, which is expected behavior
@@ -721,7 +703,7 @@ fn test_complete_vault_withdraw_flow() {
     println!("This verifies that signature validation mechanism works correctly");
 
     // Directly comment out actual withdraw call as it will panic
-    // let actual_amount = test_env.withdraw(withdraw_target, nav_value, request_hash, timestamp, signature);
+    // let actual_amount = test_env.withdraw(withdraw_target, nav_value, request_hash, signature);
 
     println!("Withdrawal process is ready, signature validation mechanism works correctly");
 
@@ -765,11 +747,10 @@ fn test_complete_vault_withdraw_flow() {
     );
 
     // Verify withdrawal settings
-    let expected_verifier_str = String::from_str(
-        &test_env.env,
-        "GDX2W2LKRSXXU4GEF3STS4C3JJ2H4XLODOZGWPOVFY4LV5ZJ4PNTXYTW",
-    );
-    let expected_verifier = Address::from_string(&expected_verifier_str);
+    let mut expected_verifier_bytes = [0u8; 32];
+    expected_verifier_bytes[0] = 0xDE;
+    expected_verifier_bytes[1] = 0xAD;
+    let expected_verifier = BytesN::from_array(&test_env.env, &expected_verifier_bytes);
     assert_eq!(withdraw_verifier, expected_verifier);
     assert_eq!(withdraw_ratio, 100); // 1%
     assert!(withdraw_currency.is_some());
@@ -800,9 +781,8 @@ fn test_withdraw_error_scenarios() {
     println!("=== Test 1: Invalid signature length ===");
     let invalid_signature = Bytes::from_array(&test_env.env, &[1u8; 32]); // Only 32 bytes, should be 64 bytes
     let request_hash = test_env.create_request_hash(1);
-    let timestamp = 1700000000u64; // Use fixed timestamp for testing
-    let target_amount = 1000000i128; // 0.01 WBTC
-    let nav = 100_000_000i128; // 1.0 NAV
+    let _target_amount = 1000000i128; // 0.01 WBTC
+    let _nav = 100_000_000i128; // 1.0 NAV
 
     // Note: This will panic due to signature length error
     // Since we are using a mock environment, we only verify parameter setup is correct
@@ -830,18 +810,15 @@ fn test_withdraw_error_scenarios() {
     // Test case 3: Verify contract initialization state
     println!("=== Test 3: Contract initialization state ===");
 
-    let is_initialized = vault_client.is_initialized();
-    let admin = vault_client.admin();
+    let admin = vault_client.get_admin();
     let withdraw_verifier = vault_client.get_withdraw_verifier();
     let withdraw_ratio = vault_client.get_withdraw_fee_ratio();
 
-    assert!(is_initialized);
     assert_eq!(admin, test_env.admin);
-    let expected_verifier_str = String::from_str(
-        &test_env.env,
-        "GDX2W2LKRSXXU4GEF3STS4C3JJ2H4XLODOZGWPOVFY4LV5ZJ4PNTXYTW",
-    );
-    let expected_verifier = Address::from_string(&expected_verifier_str);
+    let mut expected_verifier_bytes = [0u8; 32];
+    expected_verifier_bytes[0] = 0xDE;
+    expected_verifier_bytes[1] = 0xAD;
+    let expected_verifier = BytesN::from_array(&test_env.env, &expected_verifier_bytes);
     assert_eq!(withdraw_verifier, expected_verifier);
     assert_eq!(withdraw_ratio, 100);
 
@@ -884,7 +861,6 @@ fn test_withdraw_signature_validation_structure() {
     // 4. Prepare withdrawal parameters
     let target_amount = 50_000_000i128; // 0.5 WBTC
     let request_hash = test_env.create_request_hash(1);
-    let timestamp = 1700000000u64; // Use fixed timestamp for testing
     let signature = test_env.create_mock_signature();
 
     // 5. Verify all parameter formats correct
@@ -895,14 +871,12 @@ fn test_withdraw_signature_validation_structure() {
         "Withdrawal amount should be greater than 0"
     );
     assert!(nav_value > 0, "NAV should be greater than 0");
-    assert!(timestamp > 0, "Timestamp should be greater than 0");
 
     println!("Signature validation parameter verification:");
     println!("   Request hash length: {} ✓", request_hash.len());
     println!("   Signature length: {} ✓", signature.len());
     println!("   Target amount: {} ✓", target_amount);
     println!("  NAV value: {} ✓", nav_value);
-    println!("   Timestamp: {} ✓", timestamp);
 
     // 6. Verify contract state
     let vault_client = test_env.get_vault_client();
@@ -910,14 +884,13 @@ fn test_withdraw_signature_validation_structure() {
     let withdraw_currency = vault_client.get_withdraw_currency();
     let is_currency_supported = vault_client.is_currency_supported(&test_env.wbtc_token_addr);
 
-    let expected_verifier_str = String::from_str(
-        &test_env.env,
-        "GDX2W2LKRSXXU4GEF3STS4C3JJ2H4XLODOZGWPOVFY4LV5ZJ4PNTXYTW",
-    );
-    let expected_verifier = Address::from_string(&expected_verifier_str);
+    let mut expected_verifier_bytes = [0u8; 32];
+    expected_verifier_bytes[0] = 0xDE;
+    expected_verifier_bytes[1] = 0xAD;
+    let expected_verifier = BytesN::from_array(&test_env.env, &expected_verifier_bytes);
     assert_eq!(
         withdraw_verifier, expected_verifier,
-        "Verifier address should match"
+        "Verifier public key should match"
     );
     assert!(
         withdraw_currency.is_some(),
@@ -993,7 +966,6 @@ fn test_withdraw_with_invalid_signature_should_panic() {
     // Attempt withdrawal - This should panic due to invalid signature
     let target_amount = 50_000_000i128; // 0.5 WBTC
     let request_hash = test_env.create_request_hash(1);
-    let timestamp = 1700000000u64; // Use fixed timestamp for testing
     let invalid_signature = test_env.create_mock_signature(); // Simulated signature, will fail verification
 
     println!("Execute withdrawal operation, expect panic due to signature validation failure...");
@@ -1003,7 +975,6 @@ fn test_withdraw_with_invalid_signature_should_panic() {
         target_amount,
         nav_value,
         request_hash,
-        timestamp,
         invalid_signature,
     );
 }
@@ -1055,7 +1026,6 @@ fn test_withdraw_with_real_signature_success() {
     // Prepare withdrawal parameters
     let target_amount = 50_000_000i128; // 0.5 WBTC
     let request_hash = test_env.create_request_hash(1);
-    let timestamp = 1700000000u64; // Use fixed timestamp for testing
     let withdraw_currency = test_env.get_vault_client().get_withdraw_currency().unwrap();
 
     // Use real private key to sign withdraw message
@@ -1065,7 +1035,6 @@ fn test_withdraw_with_real_signature_success() {
         &withdraw_currency,
         nav_value,
         &request_hash,
-        timestamp,
     );
 
     println!("Withdrawal parameters verification:");
@@ -1073,7 +1042,6 @@ fn test_withdraw_with_real_signature_success() {
     println!("   Real signature length: {} ✓", real_signature.len());
     println!("   Target amount: {} ✓", target_amount);
     println!("  NAV value: {} ✓", nav_value);
-    println!("   Timestamp: {} ✓", timestamp);
 
     // Record state before withdrawal
     let before_user_wbtc = test_env.get_user_wbtc_balance();
@@ -1286,7 +1254,7 @@ fn test_treasurer_deposit_operation() {
 
         // Record pre-deposit state
         let before_treasurer_wbtc = test_env.get_treasurer_wbtc_balance();
-        let vault_client = test_env.get_vault_client();
+        let _vault_client = test_env.get_vault_client();
 
         println!("Pre-deposit treasurer WBTC balance: {}", before_treasurer_wbtc);
 
@@ -1456,7 +1424,6 @@ fn test_complete_withdraw_operation_flow() {
     // Step 4: Prepare withdrawal signature and parameters
     println!("=== Step 4: Prepare withdrawal parameters ===");
     let target_amount = withdraw_shares; // Withdrawal target amount
-    let timestamp = 1700000000u64; // Use fixed timestamp for testing
     let withdraw_currency = vault_client.get_withdraw_currency().unwrap();
 
     // Use real private key to sign
@@ -1466,13 +1433,11 @@ fn test_complete_withdraw_operation_flow() {
         &withdraw_currency,
         nav_value,
         &request_hash,
-        timestamp,
     );
 
     println!("Withdrawal parameters prepared:");
     println!("  Target amount: {} WBTC", target_amount);
     println!("  NAV value: {}", nav_value);
-    println!("  Timestamp: {}", timestamp);
     println!("  Signature length: {} bytes", signature.len());
 
     // Step 5: Verify pre-withdrawal state
@@ -1604,7 +1569,6 @@ fn test_all_four_operations_integration() {
     // Operation 4: Withdrawal operation preparation (withdraw preparation)
     println!("4. Testing withdrawal operation preparation (withdraw preparation)");
     let target_amount = withdraw_shares;
-    let timestamp = 1700000000u64; // Use fixed timestamp for testing
     let withdraw_currency = vault_client.get_withdraw_currency().unwrap();
 
     let signature = test_env.sign_vault_withdraw_message(
@@ -1613,7 +1577,6 @@ fn test_all_four_operations_integration() {
         &withdraw_currency,
         nav_value,
         &request_hash,
-        timestamp,
     );
 
     println!("   ✓ Withdrawal signature generation successful: {} bytes signature", signature.len());
@@ -1793,10 +1756,10 @@ fn test_vault_initialization_with_config() {
     let token_contract = Address::generate(&env);
     let oracle = Address::generate(&env);
     let treasurer = Address::generate(&env);
-    let withdraw_verifier = Address::from_string(&String::from_str(
-        &env,
-        "GDX2W2LKRSXXU4GEF3STS4C3JJ2H4XLODOZGWPOVFY4LV5ZJ4PNTXYTW",
-    ));
+    let mut verifier_bytes = [0u8; 32];
+    verifier_bytes[0] = 0xDE;
+    verifier_bytes[1] = 0xAD;
+    let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
     let fee_receiver = Address::generate(&env);
 
     // Deploy vault contract (constructor-based)
@@ -1817,8 +1780,7 @@ fn test_vault_initialization_with_config() {
 
     // Verify initialization
     println!("Verifying vault initialization...");
-    assert!(vault_client.is_initialized());
-    assert_eq!(vault_client.admin(), admin);
+    assert_eq!(vault_client.get_admin(), admin);
     assert_eq!(vault_client.get_oracle(), oracle);
     assert_eq!(vault_client.get_treasurer(), treasurer);
     assert_eq!(vault_client.get_withdraw_verifier(), withdraw_verifier);
@@ -1850,7 +1812,7 @@ fn test_vault_initialization_with_config() {
     // Traditional initialization removed; both are constructor-based
     
     // Both should have identical results
-    assert_eq!(vault_client.admin(), vault_client2.admin());
+    assert_eq!(vault_client.get_admin(), vault_client2.get_admin());
     assert_eq!(vault_client.get_withdraw_fee_ratio(), vault_client2.get_withdraw_fee_ratio());
     assert_eq!(vault_client.get_eip712_domain_name(), vault_client2.get_eip712_domain_name());
     

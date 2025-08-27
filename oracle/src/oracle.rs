@@ -1,10 +1,14 @@
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, Address,
-    Env, Symbol,
+    BytesN, Env, Symbol,
 };
 
+use stellar_ownable::{self as ownable, Ownable};
+use stellar_ownable_macro::only_owner;
+use stellar_default_impl_macro::default_impl;
+
 pub use crate::traits::{
-    AdminManagement, NavManagerManagement, NavQuery,
+    NavAdminManagement, NavManagerManagement, NavQuery,
 };
 
 use crate::dependencies::VaultClient;
@@ -21,18 +25,12 @@ const MAX_NAV_DECIMALS: u32 = 18;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum OracleError {
-    // Insufficient permissions
-    Unauthorized = 201,
     // Invalid argument
-    InvalidArgument = 202,
-    // Contract not initialized
-    NotInitialized = 203,
-    // Contract already initialized
-    AlreadyInitialized = 204,
+    InvalidArgument = 201,
     // NAV change exceeds maximum allowed range
-    NavChangeExceedsLimit = 205,
+    NavChangeExceedsLimit = 202,
     // NAV manager not set
-    NavManagerNotSet = 206,
+    NavManagerNotSet = 203,
 }
 
 // ==================== Data Key Definition ====================
@@ -40,10 +38,6 @@ pub enum OracleError {
 #[derive(Clone)]
 #[contracttype]
 pub enum DataKey {
-    // Contract admin
-    Admin,
-    // Initialization status
-    Initialized,
     // Current NAV value (with decimal places)
     Nav,
     // NAV decimal places
@@ -63,12 +57,13 @@ pub struct SolvBtcOracle;
 
 #[contractimpl]
 impl SolvBtcOracle {
+    /// Upgrade contract with new WASM hash
+    #[only_owner]
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+    
     pub fn __constructor(env: &Env, admin: Address, nav_decimals: u32, initial_nav: i128) {
-        // Check if already initialized
-        if Self::check_initialized(env) {
-            panic_with_error!(env, OracleError::AlreadyInitialized);
-        }
-
         // Validate parameters
         if initial_nav <= 0 {
             panic_with_error!(env, OracleError::InvalidArgument);
@@ -78,13 +73,14 @@ impl SolvBtcOracle {
             panic_with_error!(env, OracleError::InvalidArgument);
         }
 
+        // Set owner using stellar-ownable
+        ownable::set_owner(env, &admin);
+        
         // Set initial data
-        env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
             .set(&DataKey::NavDecimals, &nav_decimals);
         env.storage().instance().set(&DataKey::Nav, &initial_nav);
-        env.storage().instance().set(&DataKey::Initialized, &true);
 
         // Publish initialization event
         env.events().publish(
@@ -98,28 +94,27 @@ impl SolvBtcOracle {
 impl NavQuery for SolvBtcOracle {
     /// Get current NAV value
     fn get_nav(env: Env) -> i128 {
-        Self::require_initialized(&env);
         env.storage().instance().get(&DataKey::Nav).unwrap()
     }
 
     /// Get NAV decimal places
     fn get_nav_decimals(env: Env) -> u32 {
-        Self::require_initialized(&env);
         env.storage().instance().get(&DataKey::NavDecimals).unwrap()
+    }
+
+    /// Get the current admin address
+    fn get_admin(env: Env) -> Address {
+        // Use the ownable trait to get owner
+        // ownable::get_owner returns Option<Address>, unwrap it
+        Self::get_admin_internal(&env)
     }
 }
 
 #[contractimpl]
-impl AdminManagement for SolvBtcOracle {
-    /// Get admin address
-    fn admin(env: Env) -> Address {
-        Self::require_initialized(&env);
-        Self::get_admin(&env)
-    }
-
+impl NavAdminManagement for SolvBtcOracle {
     /// Set NAV manager (admin only)
+    #[only_owner]
     fn set_nav_manager_by_admin(env: Env, manager_address: Address) {
-        Self::require_admin(&env);
         env.storage()
             .instance()
             .set(&DataKey::NavManager, &manager_address);
@@ -127,18 +122,18 @@ impl AdminManagement for SolvBtcOracle {
         // Publish event
         env.events().publish(
             (Symbol::new(&env, "set_nav_manager"),),
-            (Self::get_admin(&env), manager_address.clone()),
+            (Self::get_admin_internal(&env), manager_address.clone()),
         );
     }
 
     /// Set Vault address (admin only)
+    #[only_owner]
     fn set_vault_by_admin(env: Env, vault: Address) {
-        Self::require_admin(&env);
         env.storage().instance().set(&DataKey::Vault, &vault);
 
         env.events().publish(
             (Symbol::new(&env, "set_vault"), vault.clone()),
-            (Self::get_admin(&env)),
+            Self::get_admin_internal(&env),
         );
     }
 }
@@ -146,8 +141,8 @@ impl AdminManagement for SolvBtcOracle {
 #[contractimpl]
 impl NavManagerManagement for SolvBtcOracle {
     /// Get NAV manager address
-    fn nav_manager(env: Env) -> Option<Address> {
-        env.storage().instance().get(&DataKey::NavManager)
+    fn get_nav_manager(env: Env) -> Address {
+        Self::get_nav_manager_internal(&env)
     }
 
     /// Set NAV value (NAV manager only)
@@ -162,13 +157,10 @@ impl NavManagerManagement for SolvBtcOracle {
         let current_nav: i128 = env.storage().instance().get(&DataKey::Nav).unwrap();
 
         //The growth rate between the set NAV and the previous NAV must not exceed the Vault’s withdraw fee rate
-        //Get vault withdraw fee rate
         let vault: Address = env.storage().instance().get(&DataKey::Vault).unwrap();
-
+        //Get vault withdraw fee rate
         let withdraw_fee_rate: i128 = VaultClient::new(&env, &vault).get_withdraw_fee_ratio();
 
-        // Calculate percentage change based on precision
-        let nav_decimals: u32 = env.storage().instance().get(&DataKey::NavDecimals).unwrap();
         // Check if NAV change exceeds limit
         Self::check_nav_change(&env, current_nav, nav, withdraw_fee_rate);
 
@@ -178,7 +170,7 @@ impl NavManagerManagement for SolvBtcOracle {
         // Publish event
         env.events().publish(
             (Symbol::new(&env, "set_nav"),),
-            (Self::get_nav_manager(&env), current_nav, nav),
+            (Self::get_nav_manager_internal(&env), current_nav, nav),
         );
     }
 }
@@ -186,34 +178,15 @@ impl NavManagerManagement for SolvBtcOracle {
 // ==================== Internal Helper Functions ====================
 
 impl SolvBtcOracle {
-    /// Check if contract is initialized (internal function)
-    fn check_initialized(env: &Env) -> bool {
-        env.storage().instance().has(&DataKey::Initialized)
-    }
 
-    /// Require contract to be initialized
-    fn require_initialized(env: &Env) {
-        if !Self::check_initialized(env) {
-            panic_with_error!(env, OracleError::NotInitialized);
-        }
-    }
-
-    /// Get admin address
-    fn get_admin(env: &Env) -> Address {
-        env.storage().instance().get(&DataKey::Admin).unwrap()
+    /// Get admin address (internal helper)
+    fn get_admin_internal(env: &Env) -> Address {
+        ownable::get_owner(env).unwrap()
     }
 
     /// Get NAV manager address
-    fn get_nav_manager(env: &Env) -> Address {
-        env.storage().instance().get(&DataKey::NavManager).unwrap()
-    }
-
-    /// Verify admin permission
-    fn require_admin(env: &Env) -> Address {
-        Self::require_initialized(env);
-        let admin = Self::get_admin(env);
-        admin.require_auth();
-        admin
+    fn get_nav_manager_internal(env: &Env) -> Address {
+        env.storage().instance().get(&DataKey::NavManager).unwrap_or_else(|| panic_with_error!(env, OracleError::NavManagerNotSet))
     }
 
     /// Verify NAV manager permission
@@ -242,3 +215,9 @@ impl SolvBtcOracle {
         }
     }
 }
+
+// ==================== Ownable Implementation ====================
+
+#[default_impl]
+#[contractimpl]
+impl Ownable for SolvBtcOracle {}

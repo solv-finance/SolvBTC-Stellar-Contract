@@ -1,4 +1,4 @@
-use soroban_sdk::{contractclient, contracttype, Address, Bytes, Env, String, Vec};
+use soroban_sdk::{contractclient, contracttype, Address, Bytes, BytesN, Env, String, Vec};
 
 // ==================== Deposit and Withdrawal Functions ====================
 
@@ -44,8 +44,7 @@ pub trait VaultOperations {
         target_amount: i128,
         nav: i128,
         request_hash: Bytes,
-        timestamp: u64,
-        signature: Bytes,
+        signature: BytesN<64>,
     ) -> i128;
 
     /// Withdraw request
@@ -79,8 +78,8 @@ pub trait CurrencyManagement {
 
 /// System management trait
 pub trait SystemManagement {
-    /// Set withdrawal verifier by admin
-    fn set_withdraw_verifier_by_admin(env: Env, verifier_address: Address);
+    /// Set withdrawal verifier by admin (using public key)
+    fn set_withdraw_verifier_by_admin(env: Env, verifier_public_key: BytesN<32>);
 
     /// Set Oracle by admin
     fn set_oracle_by_admin(env: Env, oracle: Address);
@@ -104,10 +103,10 @@ pub trait SystemManagement {
 /// Query trait
 pub trait VaultQuery {
     /// Get admin address
-    fn admin(env: Env) -> Address;
+    fn get_admin(env: Env) -> Address;
 
-    /// Get withdrawal verifier address
-    fn get_withdraw_verifier(env: Env) -> Address;
+    /// Get withdrawal verifier public key
+    fn get_withdraw_verifier(env: Env) -> BytesN<32>;
 
     /// Get Oracle address
     fn get_oracle(env: Env) -> Address;
@@ -124,8 +123,6 @@ pub trait VaultQuery {
     /// Get withdrawal fee receiver
     fn get_withdraw_fee_receiver(env: Env) -> Address;
 
-    /// Check if contract is initialized
-    fn is_initialized(env: Env) -> bool;
 
     /// Get EIP712 domain name
     fn get_eip712_domain_name(env: Env) -> String;
@@ -157,7 +154,7 @@ pub struct DepositEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WithdrawEvent {
     pub amount: i128,
-    pub timestamp: u64,
+    pub fee: i128,
 }
 
 /// Currency added event
@@ -179,6 +176,7 @@ pub struct CurrencyRemovedEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WithdrawRequestEvent {
+    pub token_contract: Address,
     pub shares: i128,
     pub request_hash: Bytes,
     pub nav: i128,

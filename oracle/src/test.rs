@@ -4,7 +4,7 @@ use super::*;
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Events},
-    Address, Env,
+    Address, Env, Bytes, BytesN,
 };
 
 // Mock Vault contract for testing
@@ -82,7 +82,7 @@ fn test_initialize_success() {
 
     // Already initialized via constructor in create_oracle_contract; set vault
     client.set_vault_by_admin(&vault_address);
-    assert_eq!(client.admin(), admin);
+    assert_eq!(client.get_admin(), admin);
     assert_eq!(client.get_nav(), 1000000000);
     assert_eq!(client.get_nav_decimals(), 8);
 }
@@ -146,14 +146,14 @@ fn test_admin_functions() {
     let (client, _, admin, _, _) = setup_initialized_oracle(&env);
 
     // Verify admin address
-    assert_eq!(client.admin(), admin);
+    assert_eq!(client.get_admin(), admin);
 
     // Set NAV manager
     let nav_manager = Address::generate(&env);
     client.set_nav_manager_by_admin(&nav_manager);
 
     // Verify setting successful
-    assert_eq!(client.nav_manager(), Some(nav_manager));
+    assert_eq!(client.get_nav_manager(), nav_manager);
 }
 
 // ==================== NAV Manager Functionality Tests ====================
@@ -181,7 +181,7 @@ fn test_set_nav_by_manager_success() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #202)")]
+#[should_panic(expected = "HostError: Error(Contract, #201)")]
 fn test_set_nav_invalid_nav() {
     let env = Env::default();
     env.mock_all_auths();
@@ -197,7 +197,7 @@ fn test_set_nav_invalid_nav() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #202)")]
+#[should_panic(expected = "HostError: Error(Contract, #201)")]
 fn test_set_nav_decreasing() {
     let env = Env::default();
     env.mock_all_auths();
@@ -213,7 +213,7 @@ fn test_set_nav_decreasing() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #205)")]
+#[should_panic(expected = "HostError: Error(Contract, #202)")]
 fn test_set_nav_exceeds_limit() {
     let env = Env::default();
     env.mock_all_auths();
@@ -232,7 +232,7 @@ fn test_set_nav_exceeds_limit() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #206)")]
+#[should_panic(expected = "HostError: Error(Contract, #203)")]
 fn test_set_nav_manager_not_set() {
     let env = Env::default();
     env.mock_all_auths();
@@ -321,8 +321,6 @@ fn test_maximum_decimals() {
 fn test_initialization_event() {
     let env = Env::default();
     env.mock_all_auths();
-
-    let admin = Address::generate(&env);
     let (_, vault_address) = create_mock_vault(&env);
     let (client, _, _) = create_oracle_contract(&env);
 
@@ -368,7 +366,6 @@ fn test_complete_workflow() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let _admin = Address::generate(&env);
     let nav_manager = Address::generate(&env);
     let (vault_client, vault_address) = create_mock_vault(&env);
     let (client, _, _) = create_oracle_contract(&env);
@@ -383,7 +380,7 @@ fn test_complete_workflow() {
 
     // 2. Set NAV manager
     client.set_nav_manager_by_admin(&nav_manager);
-    assert_eq!(client.nav_manager(), Some(nav_manager));
+    assert_eq!(client.get_nav_manager(), nav_manager);
 
     // 3. Update NAV value
     client.set_nav_by_manager(&1100000000); // Increase 10%
@@ -395,7 +392,7 @@ fn test_complete_workflow() {
 
     // 5. Verify all states
     // admin is the one used in constructor; here just ensure admin getter works
-    let _ = client.admin();
+    let _ = client.get_admin();
     assert_eq!(client.get_nav_decimals(), 8);
 }
 
@@ -421,7 +418,7 @@ fn test_nav_change_precision() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #205)")]
+#[should_panic(expected = "HostError: Error(Contract, #202)")]
 fn test_nav_change_precision_exceeds() {
     let env = Env::default();
     env.mock_all_auths();
@@ -444,18 +441,15 @@ fn test_nav_change_precision_exceeds() {
 #[test]
 fn test_error_enum_values() {
     // Verify error enum definitions
-    assert_eq!(OracleError::Unauthorized as u32, 201);
-    assert_eq!(OracleError::InvalidArgument as u32, 202);
-    assert_eq!(OracleError::NotInitialized as u32, 203);
-    assert_eq!(OracleError::AlreadyInitialized as u32, 204);
-    assert_eq!(OracleError::NavChangeExceedsLimit as u32, 205);
-    assert_eq!(OracleError::NavManagerNotSet as u32, 206);
+    assert_eq!(OracleError::InvalidArgument as u32, 201);
+    assert_eq!(OracleError::NavChangeExceedsLimit as u32, 202);
+    assert_eq!(OracleError::NavManagerNotSet as u32, 203);
 }
 
 
 /// Test invalid NAV in set_nav_by_manager
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #202)")]
+#[should_panic(expected = "HostError: Error(Contract, #201)")]
 fn test_set_nav_by_manager_invalid_nav_zero() {
     let env = Env::default();
     env.mock_all_auths();
@@ -470,7 +464,7 @@ fn test_set_nav_by_manager_invalid_nav_zero() {
 
 /// Test invalid NAV in set_nav_by_manager - negative
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #202)")]
+#[should_panic(expected = "HostError: Error(Contract, #201)")]
 fn test_set_nav_by_manager_invalid_nav_negative() {
     let env = Env::default();
     env.mock_all_auths();
@@ -489,7 +483,6 @@ fn test_set_nav_by_manager_invalid_nav_negative() {
 fn test_set_nav_manager_unauthorized() {
     let env = Env::default();
     
-    let admin = Address::generate(&env);
     let (_, vault_address) = create_mock_vault(&env);
     let (client, _, _) = create_oracle_contract(&env);
     
@@ -528,19 +521,20 @@ fn test_get_nav_decimals_after_constructor() {
 fn test_admin_query_after_constructor() {
     let env = Env::default();
     let (client, _, _) = create_oracle_contract(&env);
-    let _ = client.admin();
+    let _ = client.get_admin();
 }
 
 /// Test nav manager query before it's set
 #[test]
+#[should_panic(expected = "203")]
 fn test_nav_manager_query_not_set() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (client, _, _, _, _) = setup_initialized_oracle(&env);
     
-    // Nav manager should be None initially
-    assert_eq!(client.nav_manager(), None);
+    // Nav manager not set, should panic
+    client.get_nav_manager();
 }
 
 
@@ -558,15 +552,12 @@ fn test_nav_manager_complete_workflow() {
     // Set vault's withdraw ratio (5%)
     vault_client.set_withdraw_fee_ratio(&500);
 
-    // Initially no nav manager should be set
-    assert_eq!(client.nav_manager(), None);
-
     // Set NAV manager (this should emit an event)
     let nav_manager = Address::generate(&env);
     client.set_nav_manager_by_admin(&nav_manager);
 
     // Verify nav manager is set
-    assert_eq!(client.nav_manager(), Some(nav_manager.clone()));
+    assert_eq!(client.get_nav_manager(), nav_manager.clone());
 
     // Update NAV (this should emit an event)
     let old_nav = client.get_nav();
@@ -580,13 +571,66 @@ fn test_nav_manager_complete_workflow() {
     // The fact that we can call these functions without panic means they're working
 }
 
+// ==================== Upgrade Tests ====================
+
+// Use the optimized wasm built at workspace root
+const ORACLE_WASM_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../target/wasm32-unknown-unknown/optimized/solvbtc_oracle.wasm"
+));
+
+#[test]
+fn test_oracle_upgrade_success() {
+    let env = Env::default();
+    // Allow owner auth to pass
+    env.mock_all_auths();
+
+    let (client, _, _) = create_oracle_contract(&env);
+
+    // Upload new wasm and get its hash
+    let wasm_hash = env
+        .deployer()
+        .upload_contract_wasm(Bytes::from_slice(&env, ORACLE_WASM_BYTES));
+
+    // Call upgrade
+    client.upgrade(&wasm_hash);
+
+    // Post-upgrade: contract should still function
+    assert_eq!(client.get_nav_decimals(), 8);
+}
+
+#[test]
+#[should_panic]
+fn test_oracle_upgrade_with_unuploaded_hash_should_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _addr, _admin) = create_oracle_contract(&env);
+
+    // Random hash that was never uploaded
+    let fake = BytesN::from_array(&env, &[7u8; 32]);
+    client.upgrade(&fake);
+}
+
+#[test]
+#[should_panic]
+fn test_oracle_upgrade_requires_owner_should_panic() {
+    let env = Env::default();
+    let (client, _addr, _admin) = create_oracle_contract(&env);
+
+    let wasm_hash = env
+        .deployer()
+        .upload_contract_wasm(Bytes::from_slice(&env, ORACLE_WASM_BYTES));
+
+    // No auth mocked → only_owner should fail
+    client.upgrade(&wasm_hash);
+}
+
 /// Test initialization event emission
 #[test]
 fn test_initialization_creates_events() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let admin = Address::generate(&env);
     let vault = Address::generate(&env);
     let (client, _, _) = create_oracle_contract(&env);
 
@@ -597,9 +641,9 @@ fn test_initialization_creates_events() {
     
     // Verify state after initialization
     // After constructor, contract is initialized
-    // client.admin() should equal the admin passed during constructor in create_oracle_contract
+    // client.get_admin() should equal the admin passed during constructor in create_oracle_contract
     // But create_oracle_contract generates its own admin; only verify getters are consistent
-    let _ = client.admin();
+    let _ = client.get_admin();
     assert_eq!(client.get_nav_decimals(), 8);
     assert_eq!(client.get_nav(), 1_000_000_000);
 }
@@ -613,14 +657,14 @@ fn test_admin_internal_functions() {
     let (client, _, admin, _, _) = setup_initialized_oracle(&env);
     
     // Verify admin is correctly returned
-    assert_eq!(client.admin(), admin);
+    assert_eq!(client.get_admin(), admin);
     
     // Test setting nav manager requires admin auth
     let nav_manager = Address::generate(&env);
     client.set_nav_manager_by_admin(&nav_manager);
     
     // Verify nav manager was set
-    assert_eq!(client.nav_manager(), Some(nav_manager.clone()));
+    assert_eq!(client.get_nav_manager(), nav_manager.clone());
 }
 
 /// Test nav manager authorization and functions
@@ -715,8 +759,8 @@ fn test_initialization_variations() {
         // After constructor deploy, contract is initialized
         assert_eq!(client.get_nav_decimals(), decimals);
         assert_eq!(client.get_nav(), nav);
-        assert_eq!(client.admin(), admin);
-        assert_eq!(client.nav_manager(), None); // Initially no nav manager
+        assert_eq!(client.get_admin(), admin);
+        // Note: get_nav_manager() will panic if nav manager is not set
     }
 }
 
@@ -725,10 +769,7 @@ fn test_initialization_variations() {
 fn test_error_enum_completeness() {
     // Test all error enum values for coverage
     let errors = [
-        OracleError::Unauthorized,
         OracleError::InvalidArgument,
-        OracleError::NotInitialized,
-        OracleError::AlreadyInitialized,
         OracleError::NavChangeExceedsLimit,
         OracleError::NavManagerNotSet,
     ];
@@ -737,7 +778,4 @@ fn test_error_enum_completeness() {
     assert_eq!(errors[0] as u32, 201);
     assert_eq!(errors[1] as u32, 202);
     assert_eq!(errors[2] as u32, 203);
-    assert_eq!(errors[3] as u32, 204);
-    assert_eq!(errors[4] as u32, 205);
-    assert_eq!(errors[5] as u32, 206);
 }

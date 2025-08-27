@@ -12,6 +12,9 @@ testutils = ["soroban-sdk/testutils"]
 
 [dependencies]
 soroban-sdk = { workspace = true }
+stellar-ownable = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", tag = "v0.3.0" }
+stellar-ownable-macro = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", tag = "v0.3.0" }
+stellar-default-impl-macro = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", tag = "v0.3.0" }
 ed25519-dalek = { workspace = true }
 sha3 = { workspace = true }
 hex = { workspace = true }

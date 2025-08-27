@@ -50,15 +50,15 @@ clean:
 	cargo clean
 
 generate-js:
-	soroban contract bindings typescript --overwrite \
+	stellar contract bindings typescript --overwrite \
 		--wasm ./target/wasm32-unknown-unknown/optimized/fungible_token.wasm \
 		--output-dir ./js-bindings/fungible-token/ \
 		--network testnet
-	soroban contract bindings typescript --overwrite \
+	stellar contract bindings typescript --overwrite \
 		--wasm ./target/wasm32-unknown-unknown/optimized/solvbtc_vault.wasm \
 		--output-dir ./js-bindings/vault/ \
 		--network testnet
-	soroban contract bindings typescript --overwrite \
+	stellar contract bindings typescript --overwrite \
 		--wasm ./target/wasm32-unknown-unknown/optimized/solvbtc_oracle.wasm \
 		--output-dir ./js-bindings/oracle/ \
 		--network testnet

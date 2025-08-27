@@ -5,10 +5,10 @@ import { randomBytes } from 'crypto'; // Add this line
 
 
 // Import contract bindings
-import * as fungibleTokenModule from '../../js-bindings/fungible-token/dist/index.js';
-import * as vaultModule from '../../js-bindings/vault/dist/index.js';
-import * as oracleModule from '../../js-bindings/oracle/dist/index.js';
-import * as minterManagerModule from '../../js-bindings/minter-manager/dist/index.js';
+import * as fungibleTokenModule from '../bindings/fungible-token/dist/index.js';
+import * as vaultModule from '../js-client/bindings/vault/dist/index.js';
+import * as oracleModule from '../js-client/bindings/oracle/dist/index.js';
+// Minter manager is now part of fungible token, not a separate contract
 
 import { generateWithdrawSignature } from './signature-utils.mjs';
 
@@ -51,14 +51,7 @@ export class StellarContractClient {
     });
   }
 
-  createMinterManagerClient(contractId) {
-    return new minterManagerModule.Client({
-      contractId: contractId,
-      networkPassphrase: this.config.network.networkPassphrase,
-      rpcUrl: this.config.network.rpcUrl,
-      allowHttp: true
-    });
-  }
+  // Minter manager is now part of fungible token contract, not a separate contract
 
   // Initialize token contract
   async initializeToken(secretKey) {
@@ -139,42 +132,7 @@ export class StellarContractClient {
     }
   }
 
-  // Initialize MinterManager contract
-  async initializeMinterManager(secretKey) {
-    try {
-      console.log("Initializing MinterManager contract...");
-      const keypair = Keypair.fromSecret(secretKey);
-      const minterManagerClient = this.createMinterManagerClient(this.config.contracts.minterManager);
-      
-      // Check if already initialized
-      try {
-        const isInitialized = await minterManagerClient.is_initialized();
-        if (isInitialized.result) {
-          console.log("MinterManager contract already initialized");
-          return true;
-        }
-      } catch (error) {
-        console.log("Error checking initialization status, attempting to initialize");
-      }
-      
-      // Initialize contract
-      const initOp = await minterManagerClient.initialize({
-        admin: keypair.publicKey(),
-        token_contract: this.config.contracts.fungibleToken
-      }, {
-        fee: 100000,
-        timeoutInSeconds: 30
-      });
-      
-      initOp.sign(keypair);
-      const result = await initOp.send();
-      console.log("MinterManager contract initialized successfully:", result);
-      return true;
-    } catch (error) {
-      console.error("Error initializing MinterManager contract:", error.message);
-      return false;
-    }
-  }
+  // MinterManager is now part of fungible token, no separate initialization needed
 
   // Initialize Vault contract
   async initializeVault(secretKey) {
@@ -687,11 +645,11 @@ async function main() {
   
   // Check if admin key is provided
   if (CONFIG.accounts.admin && CONFIG.accounts.admin.secretKey) {
-    // Query minter info
+    // Query minter info (now part of fungible token contract)
     console.log("\n===== Querying minter info =====");
-    const minterManagerClient = client.createMinterManagerClient(CONFIG.contracts.minterManager);
     try {
-      const mintersOp = await minterManagerClient.get_minters();
+      const tokenClient = client.createTokenClient(CONFIG.contracts.fungibleToken);
+      const mintersOp = await tokenClient.get_minters();
       const mintersResult = await mintersOp.simulate();
       console.log("Current minter list:", mintersResult.result);
       

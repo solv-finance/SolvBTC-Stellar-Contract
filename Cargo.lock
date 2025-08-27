@@ -1159,6 +1159,9 @@ name = "solvbtc-oracle"
 version = "1.0.0"
 dependencies = [
  "soroban-sdk",
+ "stellar-default-impl-macro",
+ "stellar-ownable",
+ "stellar-ownable-macro",
 ]
 
 [[package]]
@@ -1171,6 +1174,9 @@ dependencies = [
  "rand",
  "sha3",
  "soroban-sdk",
+ "stellar-default-impl-macro",
+ "stellar-ownable",
+ "stellar-ownable-macro",
  "stellar-strkey 0.0.7",
 ]
 

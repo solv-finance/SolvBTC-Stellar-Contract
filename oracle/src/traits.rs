@@ -11,14 +11,14 @@ pub trait NavQuery {
 
     /// Get NAV decimal places
     fn get_nav_decimals(env: Env) -> u32;
+
+    /// Get the current admin address
+    fn get_admin(env: Env) -> Address;
 }
 
 /// Admin management trait
 /// Responsible for admin-related functions
-pub trait AdminManagement {
-    /// Get admin address
-    fn admin(env: Env) -> Address;
-
+pub trait NavAdminManagement {
     /// Set NAV manager by admin
     fn set_nav_manager_by_admin(env: Env, manager_address: Address);
 
@@ -30,7 +30,7 @@ pub trait AdminManagement {
 /// Responsible for NAV manager functions
 pub trait NavManagerManagement {
     /// Get NAV manager address
-    fn nav_manager(env: Env) -> Option<Address>;
+    fn get_nav_manager(env: Env) -> Address;
 
     /// Set NAV by manager
     fn set_nav_by_manager(env: Env, nav: i128);
