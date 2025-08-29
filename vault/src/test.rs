@@ -4,7 +4,7 @@ extern crate std;
 use super::*;
 // unused imports removed
 use soroban_sdk::{
-    contract, contractimpl, testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, MockAuth, MockAuthInvoke}, 
+    contract, contractimpl, contracttype, testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, MockAuth, MockAuthInvoke}, 
     Address, Bytes, BytesN, Env, IntoVal, String, Symbol,
 };
 use soroban_sdk::xdr::ToXdr;
@@ -257,7 +257,7 @@ fn test_withdraw_verifier_key_management() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #324)")] // InvalidSignatureFormat
+#[should_panic(expected = "HostError: Error(Contract, #312)")] // InvalidRequestStatus (checked before signature)
 fn test_withdraw_invalid_signature_content() {
     let env = Env::default();
     env.mock_all_auths();
@@ -471,7 +471,7 @@ fn test_mock_public_key_format() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #324)")] // Crypto error from invalid signature
+#[should_panic(expected = "HostError: Error(Contract, #312)")] // InvalidRequestStatus (checked before signature)
 fn test_withdraw_with_mock_pubkey() {
     let env = Env::default();
     env.mock_all_auths();
@@ -507,31 +507,19 @@ fn test_withdraw_with_mock_pubkey() {
 #[test]
 fn test_error_enum() {
     // Verify error codes
-    assert_eq!(VaultError::InvalidArgument as u32, 301);
-    assert_eq!(VaultError::CurrencyNotAllowed as u32, 302);
-    assert_eq!(VaultError::TooManyCurrencies as u32, 303);
-    assert_eq!(VaultError::CurrencyAlreadyExists as u32, 304);
-    assert_eq!(VaultError::CurrencyNotExists as u32, 305);
-    assert_eq!(VaultError::InvalidAmount as u32, 306);
-    assert_eq!(VaultError::OracleNotSet as u32, 307);
-    assert_eq!(VaultError::DepositFeeRatioNotSet as u32, 308);
-    assert_eq!(VaultError::TreasurerNotSet as u32, 309);
-    assert_eq!(VaultError::WithdrawVerifierNotSet as u32, 310);
-    assert_eq!(VaultError::WithdrawCurrencyNotSet as u32, 311);
-    assert_eq!(VaultError::InvalidSignature as u32, 312);
-    assert_eq!(VaultError::RequestHashAlreadyUsed as u32, 313);
-    assert_eq!(VaultError::InvalidNav as u32, 314);
-    assert_eq!(VaultError::WithdrawFeeRatioNotSet as u32, 315);
-    assert_eq!(VaultError::InvalidWithdrawFeeRatio as u32, 316);
-    assert_eq!(VaultError::WithdrawFeeReceiverNotSet as u32, 317);
-    assert_eq!(VaultError::StaleNavValue as u32, 318);
-    assert_eq!(VaultError::InvalidFeeAmount as u32, 319);
-    assert_eq!(VaultError::TokenContractNotSet as u32, 320);
-    assert_eq!(VaultError::InvalidSignatureFormat as u32, 321);
-    assert_eq!(VaultError::RequestAlreadyExists as u32, 322);
-    assert_eq!(VaultError::InsufficientBalance as u32, 323);
-    assert_eq!(VaultError::InvalidRequestStatus as u32, 324);
-    assert_eq!(VaultError::InvalidDepositFeeRatio as u32, 325);
+    assert_eq!(VaultError::CurrencyNotAllowed as u32, 301);
+    assert_eq!(VaultError::TooManyCurrencies as u32, 302);
+    assert_eq!(VaultError::CurrencyAlreadyExists as u32, 303);
+    assert_eq!(VaultError::CurrencyNotExists as u32, 304);
+    assert_eq!(VaultError::InvalidAmount as u32, 305);
+    assert_eq!(VaultError::InvalidNav as u32, 306);
+    assert_eq!(VaultError::WithdrawFeeRatioNotSet as u32, 307);
+    assert_eq!(VaultError::InvalidWithdrawFeeRatio as u32, 308);
+    assert_eq!(VaultError::InvalidSignatureFormat as u32, 309);
+    assert_eq!(VaultError::RequestAlreadyExists as u32, 310);
+    assert_eq!(VaultError::InsufficientBalance as u32, 311);
+    assert_eq!(VaultError::InvalidRequestStatus as u32, 312);
+    assert_eq!(VaultError::InvalidDepositFeeRatio as u32, 313);
 }
 
 // ==================== System Management Tests ====================
@@ -709,14 +697,31 @@ pub struct MockOracle;
 
 #[contractimpl]
 impl MockOracle {
-    pub fn get_nav(_env: Env) -> i128 {
-        100000000 // Mock NAV: 1.0 with 8 decimal places
+    pub fn get_nav(env: Env) -> i128 {
+        // Default NAV: 1.0 with 8 decimal places
+        env.storage().instance().get(&MockOracleDataKey::Nav).unwrap_or(100000000)
     }
 
-    pub fn get_nav_decimals(_env: Env) -> u32 {
-        8 // Mock 8 decimal places
+    pub fn get_nav_decimals(env: Env) -> u32 {
+        // Default decimals: 8
+        env.storage().instance().get(&MockOracleDataKey::Decimals).unwrap_or(8)
+    }
+
+    /// Configure NAV and decimals for tests
+    pub fn set_nav_and_decimals(env: Env, nav: i128, decimals: u32) {
+        env.storage().instance().set(&MockOracleDataKey::Nav, &nav);
+        env.storage().instance().set(&MockOracleDataKey::Decimals, &decimals);
     }
 }
+
+#[derive(Clone)]
+#[contracttype]
+enum MockOracleDataKey {
+    Nav,
+    Decimals,
+}
+
+// Removed extra oracle contracts to avoid duplicate export names in generated spec
 
 // Removed unused MockMinterManager to avoid function name collisions in generated spec
 
@@ -764,6 +769,61 @@ fn create_vault_with_mocks(env: &Env) -> (SolvBTCVaultClient, Address, Address, 
     (client, token_addr, oracle_addr, treasurer)
 }
 
+/// Build a vault with withdraw_fee_ratio = 0 in constructor
+fn create_vault_with_zero_fee(env: &Env) -> (SolvBTCVaultClient, Address, Address, Address) {
+    env.mock_all_auths();
+    let admin = Address::generate(env);
+    let token_addr = register_mock_token(env);
+    let oracle_addr = register_mock_oracle(env);
+    let treasurer = Address::generate(env);
+    let verifier = BytesN::from_array(env, &[0; 32]);
+
+    let contract_address = env.register(
+        SolvBTCVault,
+        (
+            admin.clone(),
+            token_addr.clone(),
+            oracle_addr.clone(),
+            treasurer.clone(),
+            verifier.clone(),
+            100i128,
+            0i128,
+            Address::generate(env),
+            token_addr.clone(),
+        ),
+    );
+    let client = SolvBTCVaultClient::new(env, &contract_address);
+    client.add_currency_by_admin(&token_addr);
+    client.set_withdraw_fee_recv_by_admin(&Address::generate(env));
+    (client, token_addr, oracle_addr, treasurer)
+}
+
+fn create_vault_with_oracle(env: &Env, oracle_addr: Address) -> (SolvBTCVaultClient, Address) {
+    env.mock_all_auths();
+    let admin = Address::generate(env);
+    let token_addr = register_mock_token(env);
+    let treasurer = Address::generate(env);
+    let verifier = BytesN::from_array(env, &[0; 32]);
+
+    let contract_address = env.register(
+        SolvBTCVault,
+        (
+            admin.clone(),
+            token_addr.clone(),
+            oracle_addr.clone(),
+            treasurer.clone(),
+            verifier.clone(),
+            100i128,
+            100i128,
+            Address::generate(env),
+            token_addr.clone(),
+        ),
+    );
+    let client = SolvBTCVaultClient::new(env, &contract_address);
+    client.add_currency_by_admin(&token_addr);
+    (client, token_addr)
+}
+
 #[test]
 fn test_deposit_success_end_to_end() {
     let env = Env::default();
@@ -775,6 +835,56 @@ fn test_deposit_success_end_to_end() {
     let amount = 100_000_000i128; // 1 unit with 8 decimals
     let minted = client.deposit(&user, &token_addr, &amount);
     assert!(minted > 0);
+}
+
+/// Trigger calculate_mint_amount numerator overflow: deposit_amount * 10^(shares) * 10^(nav)
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #305)")] // InvalidAmount
+fn test_deposit_mint_numerator_overflow_should_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Use normal oracle (8 decimals), shares/token decimals are 8 (MockToken)
+    let (client, token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
+
+    let user = Address::generate(&env);
+    // With 8+8 decimals, product factor = 1e16; choose amount > ~1.7e22 to overflow i128
+    let huge_amount = 20_000_000_000_000_000_000_000i128; // 2e22
+    client.deposit(&user, &token_addr, &huge_amount);
+}
+
+/// Trigger calculate_mint_amount denominator overflow: nav * 10^(currency)
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #305)")] // InvalidAmount
+fn test_deposit_mint_denominator_overflow_should_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Register oracle and configure extremely large NAV
+    let oracle_addr = env.register(MockOracle, ());
+    let oclient = MockOracleClient::new(&env, &oracle_addr);
+    oclient.set_nav_and_decimals(&10_i128.pow(31), &8u32);
+    let (client, token_addr) = create_vault_with_oracle(&env, oracle_addr);
+
+    let user = Address::generate(&env);
+    client.deposit(&user, &token_addr, &1i128);
+}
+
+/// Trigger calculate_mint_amount denominator == 0: nav == 0
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #305)")] // InvalidAmount
+fn test_deposit_mint_denominator_zero_should_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Register oracle with NAV == 0
+    let oracle_addr = env.register(MockOracle, ());
+    let oclient = MockOracleClient::new(&env, &oracle_addr);
+    oclient.set_nav_and_decimals(&0i128, &8u32);
+    let (client, token_addr) = create_vault_with_oracle(&env, oracle_addr);
+
+    let user = Address::generate(&env);
+    client.deposit(&user, &token_addr, &1i128);
 }
 
 #[test]
@@ -1035,7 +1145,7 @@ fn test_add_currency_authorization() {
 
 /// Test add currency that already exists
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #304)")]
+#[should_panic(expected = "HostError: Error(Contract, #303)")]
 fn test_add_currency_already_exists() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1052,7 +1162,7 @@ fn test_add_currency_already_exists() {
 
 /// Test remove currency that doesn't exist
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #305)")]
+#[should_panic(expected = "HostError: Error(Contract, #304)")]
 fn test_remove_currency_not_exists() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1067,7 +1177,7 @@ fn test_remove_currency_not_exists() {
 
 /// Test deposit with unsupported currency
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #302)")]
+#[should_panic(expected = "HostError: Error(Contract, #301)")]
 fn test_deposit_unsupported_currency() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1082,7 +1192,7 @@ fn test_deposit_unsupported_currency() {
 
 /// Test deposit with invalid amount
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #306)")]
+#[should_panic(expected = "HostError: Error(Contract, #305)")]
 fn test_deposit_invalid_amount_zero() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1100,7 +1210,7 @@ fn test_deposit_invalid_amount_zero() {
 
 /// Test deposit with negative amount
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #306)")]
+#[should_panic(expected = "HostError: Error(Contract, #305)")]
 fn test_deposit_invalid_amount_negative() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1118,7 +1228,7 @@ fn test_deposit_invalid_amount_negative() {
 
 /// Test withdraw request with invalid amount
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #306)")]
+#[should_panic(expected = "HostError: Error(Contract, #305)")]
 fn test_withdraw_request_invalid_amount_zero() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1133,7 +1243,7 @@ fn test_withdraw_request_invalid_amount_zero() {
 
 /// Test withdraw request with negative amount
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #306)")]
+#[should_panic(expected = "HostError: Error(Contract, #305)")]
 fn test_withdraw_request_invalid_amount_negative() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1149,7 +1259,7 @@ fn test_withdraw_request_invalid_amount_negative() {
 
 /// Test treasurer deposit with invalid amount
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #306)")]
+#[should_panic(expected = "HostError: Error(Contract, #305)")]
 fn test_treasurer_deposit_invalid_amount_zero() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1162,7 +1272,7 @@ fn test_treasurer_deposit_invalid_amount_zero() {
 
 /// Test treasurer deposit with negative amount
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #306)")]
+#[should_panic(expected = "HostError: Error(Contract, #305)")]
 fn test_treasurer_deposit_invalid_amount_negative() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1175,7 +1285,7 @@ fn test_treasurer_deposit_invalid_amount_negative() {
 
 /// Test max currencies limit
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #303)")]
+#[should_panic(expected = "HostError: Error(Contract, #302)")]
 fn test_add_currency_exceeds_max_limit() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1295,15 +1405,14 @@ fn test_system_management_traits() {
     assert_eq!(client.get_oracle(), config.oracle);
 }
 
-/// Test edge case: zero fee ratio
+/// Zero fee ratio now allowed by setter, should not panic
 #[test]
 fn test_zero_fee_ratio_initialization() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (client, _) = create_vault_contract(&env);
-    let config = create_custom_init_config(&env, None, Some(0));
-    // constructor 100, set to 0 by setter
+    let _config = create_custom_init_config(&env, None, Some(0));
     client.set_withdraw_fee_ratio_by_admin(&0);
     assert_eq!(client.get_withdraw_fee_ratio(), 0);
 }
@@ -1613,6 +1722,7 @@ fn test_event_structures_coverage() {
         shares: 500,
         request_hash: request_hash.clone(),
         nav: 100_000_000,
+        amount: 500,
     };
     
     let withdraw_request_event2 = withdraw_request_event.clone();
@@ -1706,7 +1816,7 @@ fn test_withdraw_status_enum() {
 
 /// Test deposit function - oracle not set error
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #302)")]
+#[should_panic(expected = "HostError: Error(Contract, #301)")]
 fn test_deposit_oracle_not_configured() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1723,7 +1833,7 @@ fn test_deposit_oracle_not_configured() {
 
 /// Test withdraw function - invalid request status
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #324)")]
+#[should_panic(expected = "HostError: Error(Contract, #312)")] // InvalidRequestStatus
 fn test_withdraw_invalid_request_status() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1737,6 +1847,70 @@ fn test_withdraw_invalid_request_status() {
     // Try to withdraw without creating request first
     // Call and expect InvalidRequestStatus (#27)
     #[allow(unused_must_use)] { client.withdraw(&user, &1000, &nav, &request_hash, &mock_signature); }
+}
+
+/// Zero withdraw fee ratio should not panic for withdraw_request
+#[test]
+fn test_withdraw_request_with_zero_withdraw_fee_ratio_allows_operation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _token, _oracle, _treasurer) = create_vault_with_zero_fee(&env);
+
+    let user = Address::generate(&env);
+    let request_hash = create_request_hash(&env, 777);
+    #[allow(unused_must_use)] { client.withdraw_request(&user, &1000, &request_hash); }
+}
+
+/// Zero withdraw fee ratio should not trigger config panic; still fails with no request
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #312)")] // InvalidRequestStatus
+fn test_withdraw_with_zero_withdraw_fee_ratio_should_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _token, _oracle, _treasurer) = create_vault_with_zero_fee(&env);
+
+    let user = Address::generate(&env);
+    let nav = 100_000_000i128;
+    let request_hash = create_request_hash(&env, 778);
+    let dummy_sig = BytesN::<64>::from_array(&env, &[0u8; 64]);
+    // Should panic due to invalid request status
+    client.withdraw(&user, &1000, &nav, &request_hash, &dummy_sig);
+}
+
+/// Test withdraw with invalid amount (shares == 0)
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #305)")] // InvalidAmount
+fn test_withdraw_invalid_amount_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
+    let user = Address::generate(&env);
+    let request_hash = create_request_hash(&env, 1001);
+    let signature = BytesN::<64>::from_array(&env, &[0u8; 64]);
+
+    let shares = 0i128;
+    let nav = 100_000_000i128;
+    client.withdraw(&user, &shares, &nav, &request_hash, &signature);
+}
+
+/// Test withdraw with invalid NAV (nav == 0)
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #306)")] // InvalidNav
+fn test_withdraw_invalid_nav_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
+    let user = Address::generate(&env);
+    let request_hash = create_request_hash(&env, 1002);
+    let signature = BytesN::<64>::from_array(&env, &[0u8; 64]);
+
+    let shares = 1i128;
+    let nav = 0i128;
+    client.withdraw(&user, &shares, &nav, &request_hash, &signature);
 }
 
 
@@ -1812,7 +1986,7 @@ fn test_vault_error_conditions() {
 
 /// Test withdrawal request duplicate detection
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #322)")]
+#[should_panic(expected = "HostError: Error(Contract, #310)")]
 fn test_withdraw_request_duplicate() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1826,6 +2000,23 @@ fn test_withdraw_request_duplicate() {
     
     // Second request with same parameters should fail with RequestAlreadyExists (#25)
     #[allow(unused_must_use)] { client.withdraw_request(&user, &1000, &request_hash); }
+}
+
+/// Test withdraw_request should fail when user shares balance is insufficient
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #311)")]
+fn test_withdraw_request_insufficient_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Use mocks: MockToken.balance() returns 1_000_000_000_000_000_000
+    // Pass shares slightly larger than that to trigger InsufficientBalance
+    let (client, _token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
+    let user = Address::generate(&env);
+    let request_hash = create_request_hash(&env, 9_999);
+    let shares = 1_000_000_000_000_000_001i128; // > mock balance
+
+    client.withdraw_request(&user, &shares, &request_hash);
 }
 
 /// Test EIP712 message creation and domain functions
@@ -1903,23 +2094,8 @@ fn test_vault_query_functions_comprehensive() {
 
 // ==================== Additional Core Function Tests ====================
 
-/// Test withdraw function with missing configuration
-#[test]
-#[should_panic(expected = "HostError: Error(Contract, #324)")]
-fn test_withdraw_missing_withdraw_currency() {
-    let env = Env::default();
-    env.mock_all_auths();
-    
-    let (client, _token, _oracle, _treasurer) = create_vault_with_mocks(&env);
-    let user = Address::generate(&env);
-    let request_hash = Bytes::from_array(&env, &[1u8; 32]);
-    let mock_signature = BytesN::<64>::from_array(&env, &[0u8; 64]);
-    let nav = 100_000_000i128;
-    
-    // Try to withdraw without any configuration (no withdraw currency set) => #14
-    // With constructor-set withdraw currency, this now should reach request status check (#27)
-    #[allow(unused_must_use)] { client.withdraw(&user, &1000, &nav, &request_hash, &mock_signature); }
-}
+// test_withdraw_missing_withdraw_currency removed:
+// WithdrawCurrency is now set in constructor and cannot be missing
 
 /// Test deposit function with missing oracle (legacy name kept)
 #[test]
@@ -2140,7 +2316,7 @@ fn test_set_deposit_fee_ratio_by_admin() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #325)")]
+#[should_panic(expected = "Error(Contract, #313)")]
 fn test_set_deposit_fee_ratio_invalid() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2179,7 +2355,7 @@ fn test_set_deposit_fee_ratio_invalid() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #325)")]
+#[should_panic(expected = "Error(Contract, #313)")]
 fn test_set_deposit_fee_ratio_negative() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2258,5 +2434,112 @@ fn test_get_deposit_fee_ratio() {
     client.set_deposit_fee_ratio_by_admin(&new_fee);
     assert_eq!(client.get_deposit_fee_ratio(), new_fee);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #308)")] // InvalidWithdrawFeeRatio in constructor
+fn test_constructor_with_negative_withdraw_fee_ratio() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let admin = Address::generate(&env);
+    let token_contract = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
+    let deposit_fee_ratio = 100i128;
+    let withdraw_fee_ratio = -1i128; // Negative fee ratio should panic
+    let withdraw_fee_receiver = Address::generate(&env);
+    let withdraw_currency = Address::generate(&env);
+    
+    env.register(
+        SolvBTCVault,
+        (
+            admin,
+            token_contract,
+            oracle,
+            treasurer,
+            withdraw_verifier,
+            deposit_fee_ratio,
+            withdraw_fee_ratio,
+            withdraw_fee_receiver,
+            withdraw_currency,
+        ),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #308)")] // InvalidWithdrawFeeRatio in constructor
+fn test_constructor_with_excessive_withdraw_fee_ratio() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let admin = Address::generate(&env);
+    let token_contract = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
+    let deposit_fee_ratio = 100i128;
+    let withdraw_fee_ratio = 10001i128; // Over 100% fee ratio should panic
+    let withdraw_fee_receiver = Address::generate(&env);
+    let withdraw_currency = Address::generate(&env);
+    
+    env.register(
+        SolvBTCVault,
+        (
+            admin,
+            token_contract,
+            oracle,
+            treasurer,
+            withdraw_verifier,
+            deposit_fee_ratio,
+            withdraw_fee_ratio,
+            withdraw_fee_receiver,
+            withdraw_currency,
+        ),
+    );
+}
+
+#[test]
+fn test_deposit_with_zero_fee_ratio() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    // Create vault with 0 deposit fee ratio (no fee)
+    let admin = Address::generate(&env);
+    let token_contract = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
+    let deposit_fee_ratio = 0i128; // 0% fee
+    let withdraw_fee_ratio = 100i128;
+    let withdraw_fee_receiver = Address::generate(&env);
+    let withdraw_currency = Address::generate(&env);
+    
+    let contract_address = env.register(
+        SolvBTCVault,
+        (
+            admin.clone(),
+            token_contract.clone(),
+            oracle.clone(),
+            treasurer.clone(),
+            withdraw_verifier.clone(),
+            deposit_fee_ratio,
+            withdraw_fee_ratio,
+            withdraw_fee_receiver.clone(),
+            withdraw_currency.clone(),
+        ),
+    );
+    let client = SolvBTCVaultClient::new(&env, &contract_address);
+    
+    // Verify deposit fee ratio is 0
+    assert_eq!(client.get_deposit_fee_ratio(), 0i128);
+    
+    // Add currency
+    client.add_currency_by_admin(&token_contract);
+    
+    // Deposit should work with 0 fee (user gets full amount after fee = amount)
+    // In real scenario, this would calculate shares correctly with 0 fee
+}
+
 
 

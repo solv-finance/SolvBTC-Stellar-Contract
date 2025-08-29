@@ -272,12 +272,11 @@ impl BlacklistTrait for FungibleTokenContract {
 impl MinterManagementTrait for FungibleTokenContract {
     fn add_minter_by_manager(env: Env, minter: Address) {
         // Get minter manager and require authorization
-        let manager: Option<Address> = env.storage()
+        let manager: Address = env.storage()
             .instance()
-            .get(&DataKey::MinterManager);
+            .get(&DataKey::MinterManager).unwrap();
         
-        let manager_addr = manager.unwrap_or_else(|| panic_with_error!(&env, TokenError::Unauthorized));
-        manager_addr.require_auth();
+        manager.require_auth();
         
         // Get current minters mapping
         let mut minters: Map<Address, i128> =
@@ -300,18 +299,17 @@ impl MinterManagementTrait for FungibleTokenContract {
         // Publish add minter event
         env.events().publish(
             (Symbol::new(&env, "minter_added"), minter.clone()),
-            manager_addr,
+            manager.clone(),
         );
     }
     
     fn remove_minter_by_manager(env: Env, minter: Address) {
         // Get minter manager and require authorization
-        let manager: Option<Address> = env.storage()
+        let manager: Address = env.storage()
             .instance()
-            .get(&DataKey::MinterManager);
+            .get(&DataKey::MinterManager).unwrap();
         
-        let manager_addr = manager.unwrap_or_else(|| panic_with_error!(&env, TokenError::Unauthorized));
-        manager_addr.require_auth();
+        manager.require_auth();
         
         // Get current minters mapping
         let mut minters: Map<Address, i128> =
@@ -329,7 +327,7 @@ impl MinterManagementTrait for FungibleTokenContract {
         // Publish remove minter event
         env.events().publish(
             (Symbol::new(&env, "minter_removed"), minter.clone()),
-            manager_addr,
+            manager.clone(),
         );
     }
     
@@ -384,38 +382,37 @@ impl FungibleTokenContract {
 
     /// Check if an address is the blacklist manager
     pub fn is_blacklist_manager(env: Env, address: Address) -> bool {
-        let manager: Option<Address> = env.storage()
+        let manager: Address = env.storage()
             .instance()
-            .get(&DataKey::BlacklistManager);
-        manager == Some(address)
+            .get(&DataKey::BlacklistManager).unwrap();
+        manager == address
     }
 
     /// Get the current blacklist manager address
-    pub fn get_blacklist_manager(env: Env) -> Option<Address> {
+    pub fn get_blacklist_manager(env: Env) -> Address {
         env.storage()
             .instance()
-            .get(&DataKey::BlacklistManager)
+            .get(&DataKey::BlacklistManager).unwrap()
     }
 
     /// Check if an address is the minter manager
     pub fn is_minter_manager(env: Env, address: Address) -> bool {
-        let manager: Option<Address> = env.storage()
+        let manager: Address = env.storage()
             .instance()
-            .get(&DataKey::MinterManager);
-        manager == Some(address)
+            .get(&DataKey::MinterManager).unwrap();
+        manager == address
     }
 
     /// Get the current minter manager address
-    pub fn get_minter_manager(env: Env) -> Option<Address> {
+    pub fn get_minter_manager(env: Env) -> Address {
         env.storage()
             .instance()
-            .get(&DataKey::MinterManager)
+            .get(&DataKey::MinterManager).unwrap()
     }
 
     /// Get the current admin address
     pub fn get_admin(env: Env) -> Address {
         // Use the ownable trait to get owner
-        // ownable::get_owner returns Option<Address>, unwrap it
         ownable::get_owner(&env).unwrap()
     }
 
@@ -447,10 +444,10 @@ impl FungibleTokenContract {
     // Require from to be the blacklist manager
     fn require_blacklist_manager(env: &Env, from: &Address) {
         from.require_auth();
-        let manager: Option<Address> = env.storage()
+        let manager: Address = env.storage()
             .instance()
-            .get(&DataKey::BlacklistManager);
-        if manager != Some(from.clone()) {
+            .get(&DataKey::BlacklistManager).unwrap();
+        if manager != from.clone() {
             panic_with_error!(env, TokenError::Unauthorized);
         }
     }

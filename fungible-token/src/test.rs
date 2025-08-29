@@ -903,8 +903,7 @@ fn test_get_minter_manager() {
     
     // Test get_minter_manager function
     let retrieved_manager = client.get_minter_manager();
-    assert!(retrieved_manager.is_some());
-    assert_eq!(retrieved_manager.unwrap(), minter_manager);
+    assert_eq!(retrieved_manager, minter_manager);
 }
 
 #[test]
@@ -917,8 +916,7 @@ fn test_minter_manager_same_as_admin() {
     
     assert!(client.is_minter_manager(&admin));
     let manager = client.get_minter_manager();
-    assert!(manager.is_some());
-    assert_eq!(manager.unwrap(), admin);
+    assert_eq!(manager, admin);
 }
 
 #[test]
@@ -1096,8 +1094,7 @@ fn test_get_blacklist_manager() {
     
     // Get blacklist manager
     let retrieved_manager = client.get_blacklist_manager();
-    assert!(retrieved_manager.is_some());
-    assert_eq!(retrieved_manager.unwrap(), blacklist_manager);
+    assert_eq!(retrieved_manager, blacklist_manager);
 }
 
 #[test]
@@ -1121,7 +1118,7 @@ fn test_set_blacklist_manager() {
     
     // Initially should be the original blacklist_manager
     assert!(client.is_blacklist_manager(&blacklist_manager));
-    assert_eq!(client.get_blacklist_manager().unwrap(), blacklist_manager);
+    assert_eq!(client.get_blacklist_manager(), blacklist_manager);
     
     // Change blacklist manager (only owner can do this)
     client.set_blacklist_manager(&new_blacklist_manager);
@@ -1129,7 +1126,7 @@ fn test_set_blacklist_manager() {
     // Verify the change
     assert!(!client.is_blacklist_manager(&blacklist_manager));
     assert!(client.is_blacklist_manager(&new_blacklist_manager));
-    assert_eq!(client.get_blacklist_manager().unwrap(), new_blacklist_manager);
+    assert_eq!(client.get_blacklist_manager(), new_blacklist_manager);
 }
 
 #[test]
@@ -1153,7 +1150,7 @@ fn test_set_minter_manager() {
     
     // Initially should be the original minter_manager
     assert!(client.is_minter_manager(&minter_manager));
-    assert_eq!(client.get_minter_manager().unwrap(), minter_manager);
+    assert_eq!(client.get_minter_manager(), minter_manager);
     
     // Change minter manager (only owner can do this)
     client.set_minter_manager(&new_minter_manager);
@@ -1161,7 +1158,7 @@ fn test_set_minter_manager() {
     // Verify the change
     assert!(!client.is_minter_manager(&minter_manager));
     assert!(client.is_minter_manager(&new_minter_manager));
-    assert_eq!(client.get_minter_manager().unwrap(), new_minter_manager);
+    assert_eq!(client.get_minter_manager(), new_minter_manager);
 }
 
 #[test]

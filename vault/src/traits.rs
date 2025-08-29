@@ -180,6 +180,7 @@ pub struct WithdrawRequestEvent {
     pub shares: i128,
     pub request_hash: Bytes,
     pub nav: i128,
+    pub amount: i128,
 }
 
 /// Treasurer deposit event

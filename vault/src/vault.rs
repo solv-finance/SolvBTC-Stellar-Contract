@@ -74,56 +74,32 @@ pub struct EIP712Domain {
 #[derive(Clone, Debug, Copy, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum VaultError {
-    /// Invalid parameter
-    InvalidArgument = 301,
     /// Currency not supported
-    CurrencyNotAllowed = 302,
+    CurrencyNotAllowed = 301,
     /// Exceeds maximum currency quantity
-    TooManyCurrencies = 303,
+    TooManyCurrencies = 302,
     /// Currency already exists
-    CurrencyAlreadyExists = 304,
+    CurrencyAlreadyExists = 303,
     /// Currency does not exist
-    CurrencyNotExists = 305,
+    CurrencyNotExists = 304,
     /// Invalid amount
-    InvalidAmount = 306,
-    /// Oracle not set
-    OracleNotSet = 307,
-    /// Deposit fee ratio not set
-    DepositFeeRatioNotSet = 308,
-    /// Treasurer not set
-    TreasurerNotSet = 309,
-    /// Withdrawal verifier not set
-    WithdrawVerifierNotSet = 310,
-    /// Withdrawal currency not set
-    WithdrawCurrencyNotSet = 311,
-    /// Signature verification failed
-    InvalidSignature = 312,
-    /// Request hash already used
-    RequestHashAlreadyUsed = 313,
+    InvalidAmount = 305,
     /// Invalid NAV
-    InvalidNav = 314,
-    /// Withdraw fee ratio not set
-    WithdrawFeeRatioNotSet = 315,
+    InvalidNav = 306,
+    /// Withdraw fee ratio not set or invalid
+    WithdrawFeeRatioNotSet = 307,
     /// Invalid withdraw fee ratio
-    InvalidWithdrawFeeRatio = 316,
-    /// Withdraw fee receiver address not set
-    WithdrawFeeReceiverNotSet = 317,
-    /// NAV value expired
-    StaleNavValue = 318,
-    /// Invalid fee amount
-    InvalidFeeAmount = 319,
-    /// Token contract not set
-    TokenContractNotSet = 320,
+    InvalidWithdrawFeeRatio = 308,
     /// Invalid signature format
-    InvalidSignatureFormat = 321,
+    InvalidSignatureFormat = 309,
     /// Request already exists
-    RequestAlreadyExists = 322,
+    RequestAlreadyExists = 310,
     /// Insufficient balance
-    InsufficientBalance = 323,
+    InsufficientBalance = 311,
     /// Invalid request status
-    InvalidRequestStatus = 324,
+    InvalidRequestStatus = 312,
     /// Invalid deposit fee ratio
-    InvalidDepositFeeRatio = 325,
+    InvalidDepositFeeRatio = 313,
    
 }
 
@@ -224,22 +200,15 @@ impl VaultOperations for SolvBTCVault {
             panic_with_error!(env, VaultError::CurrencyNotAllowed);
         }
 
-        // Get deposit fee ratio
+        // Get deposit fee ratio (can be 0 for no fee)
         let deposit_fee_ratio = Self::get_deposit_fee_ratio_internal(&env);
-        if deposit_fee_ratio <= 0 {
-            panic_with_error!(env, VaultError::DepositFeeRatioNotSet);
-        }
 
         // Calculate fee: fee = amount * depositFeeRatio / 10000
-        let fee = (amount * deposit_fee_ratio) / 10000;
+        let fee = (amount * deposit_fee_ratio) / FEE_PRECISION;
         let amount_after_fee = amount - fee;
 
         // Get NAV value
         let nav = Self::get_nav_from_oracle(&env);
-        if nav <= 0 {
-            panic_with_error!(env, VaultError::InvalidNav);
-        }
-
         // Get treasurer address
         let treasurer = Self::get_treasurer_internal(&env);
         // Get currency decimals
@@ -291,14 +260,8 @@ impl VaultOperations for SolvBTCVault {
             panic_with_error!(env, VaultError::InvalidAmount);
         }
 
-        // Check configuration contains(oracle, withdraw fee receiver, withdraw fee ratio, withdraw currency, token contract)
-        Self::validate_configuration(&env);
-
         // Get current nav from oracle
         let current_nav = Self::get_nav_from_oracle(&env);
-        if current_nav <= 0 {
-            panic_with_error!(env, VaultError::InvalidNav);
-        }
 
         // Get withdraw token address (first supported currency)
         let withdraw_token: Address = Self::get_withdraw_currency_internal(&env);
@@ -346,6 +309,16 @@ impl VaultOperations for SolvBTCVault {
             .persistent()
             .set(&request_key, &WithdrawStatus::Pending);
 
+        // Calculate preview amount for the event using the same formula as withdraw
+        let preview_amount = Self::calculate_withdraw_amount(
+            &env,
+            shares,
+            current_nav,
+            Self::get_shares_token_decimals(&env),
+            Self::get_withdraw_token_decimals(&env),
+            Self::get_nav_decimals_from_oracle(&env),
+        );
+
         // Emit WithdrawRequest event
         env.events().publish(
             (Symbol::new(&env, "withdraw_request"), from.clone(), withdraw_token.clone()),
@@ -354,6 +327,7 @@ impl VaultOperations for SolvBTCVault {
                 shares,
                 request_hash,
                 nav: current_nav,
+                amount: preview_amount,
             },
         );
     }
@@ -376,9 +350,6 @@ impl VaultOperations for SolvBTCVault {
         if nav <= 0 {
             panic_with_error!(env, VaultError::InvalidNav);
         }
-
-        // Check configuration contains(oracle, withdraw fee receiver, withdraw fee ratio, withdraw currency, token contract)
-        Self::validate_configuration(&env);
 
         // Get withdraw token address
         let withdraw_token: Address = env
@@ -416,23 +387,19 @@ impl VaultOperations for SolvBTCVault {
 
         // Get fee ratio
         let withdraw_fee_ratio = Self::get_withdraw_fee_ratio_internal(&env);
-        
 
-        // Get token decimals for precise calculation
-        let shares_token_decimals = Self::get_shares_token_decimals(&env);
-        let withdraw_token_decimals = Self::get_withdraw_token_decimals(&env);
-        let nav_decimals = Self::get_nav_decimals_from_oracle(&env);
-
-        // Calculate withdrawal amount with proper decimal handling
-        // amount = shares * nav * (10 ** withdrawTokenDecimals) / ((10 ** navDecimals) * (10 ** sharesTokenDecimals))
-        let shares_precision = 10_i128.pow(shares_token_decimals);
-        let nav_precision = 10_i128.pow(nav_decimals);
-        let withdraw_precision = 10_i128.pow(withdraw_token_decimals);
-
-        let amount = (shares * nav * withdraw_precision) / (nav_precision * shares_precision);
+        // Calculate amount using shared helper
+        let amount = Self::calculate_withdraw_amount(
+            &env,
+            shares,
+            nav,
+            Self::get_shares_token_decimals(&env),
+            Self::get_withdraw_token_decimals(&env),
+            Self::get_nav_decimals_from_oracle(&env),
+        );
 
         // Calculate fee: fee = amount * withdrawFeeRatio / 10000
-        let fee = (amount * withdraw_fee_ratio) / 10000;
+        let fee = (amount * withdraw_fee_ratio) / FEE_PRECISION;
         let amount_after_fee = amount - fee;
 
         // Set withdraw request status to DONE
@@ -666,8 +633,8 @@ impl SystemManagement for SolvBTCVault {
         );
     }
 
+    #[only_owner]
     fn set_withdraw_fee_recv_by_admin(env: Env, withdraw_fee_receiver: Address) {
-        // This function already has #[only_owner] macro, no need for manual check
         env.storage()
             .instance()
             .set(&DataKey::WithdrawFeeReceiver, &withdraw_fee_receiver);
@@ -696,22 +663,22 @@ impl VaultQuery for SolvBTCVault {
         env.storage()
             .instance()
             .get(&DataKey::WithdrawVerifier)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawVerifierNotSet))
+            .unwrap() // Set in constructor
     }
 
     fn get_oracle(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::Oracle).unwrap()
+        env.storage().instance().get(&DataKey::Oracle).unwrap() // Set in constructor
     }
 
     fn get_treasurer(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::Treasurer).unwrap()
+        env.storage().instance().get(&DataKey::Treasurer).unwrap() // Set in constructor
     }
 
     fn get_withdraw_fee_ratio(env: Env) -> i128 {
         env.storage()
             .instance()
             .get(&DataKey::WithdrawFeeRatio)
-            .unwrap()
+            .unwrap_or(0)
     }
 
     fn get_deposit_fee_ratio(env: Env) -> i128 {
@@ -866,13 +833,10 @@ impl SolvBTCVault {
 
     /// Get verifier public key
     fn get_verifier_public_key(env: &Env) -> BytesN<32> {
-        let verifier_public_key: BytesN<32> = env
-            .storage()
+        env.storage()
             .instance()
             .get(&DataKey::WithdrawVerifier)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawVerifierNotSet));
-
-            verifier_public_key
+            .unwrap() // Set in constructor
     }
 
 
@@ -881,7 +845,7 @@ impl SolvBTCVault {
         env.storage()
             .instance()
             .get(&DataKey::Treasurer)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::TreasurerNotSet))
+            .unwrap() // Set in constructor
     }
 
     /// Get withdrawal currency
@@ -889,7 +853,7 @@ impl SolvBTCVault {
         env.storage()
             .instance()
             .get(&DataKey::WithdrawCurrency)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawCurrencyNotSet))
+            .unwrap() // Set in constructor, should always exist
     }
 
     /// Get deposit fee ratio
@@ -897,7 +861,7 @@ impl SolvBTCVault {
         env.storage()
             .instance()
             .get(&DataKey::DepositFeeRatio)
-            .unwrap_or(0) // Default to 0 (no fee)
+            .unwrap_or(0) 
     }
 
     /// Get withdrawal fee ratio
@@ -905,7 +869,7 @@ impl SolvBTCVault {
         env.storage()
             .instance()
             .get(&DataKey::WithdrawFeeRatio)
-            .unwrap_or(0) // Default to 0 (no fee)
+            .unwrap_or(0)
     }
 
     /// Get withdrawal fee receiver
@@ -913,7 +877,7 @@ impl SolvBTCVault {
         env.storage()
             .instance()
             .get(&DataKey::WithdrawFeeReceiver)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawFeeReceiverNotSet))
+            .unwrap() // Set in constructor
     }
 
     /// Check if currency is supported
@@ -932,7 +896,7 @@ impl SolvBTCVault {
             .storage()
             .instance()
             .get(&DataKey::Oracle)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::OracleNotSet));
+            .unwrap(); // Set in constructor
 
         // Call Oracle contract's get_nav method
         OracleClient::new(env, &oracle_address).get_nav()
@@ -944,7 +908,7 @@ impl SolvBTCVault {
             .storage()
             .instance()
             .get(&DataKey::Oracle)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::OracleNotSet));
+            .unwrap(); // Set in constructor
 
         // Call Oracle contract's get_nav_decimals method
         OracleClient::new(env, &oracle_address).get_nav_decimals()
@@ -1072,62 +1036,12 @@ impl SolvBTCVault {
         numerator / denominator
     }
 
-    /// Validate configuration
-    fn validate_configuration(env: &Env) {
-        // Check Oracle
-        if env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::Oracle)
-            .is_none()
-        {
-            panic_with_error!(env, VaultError::OracleNotSet);
-        }
-
-        // Check withdraw fee receiver
-        if env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::WithdrawFeeReceiver)
-            .is_none()
-        {
-            panic_with_error!(env, VaultError::WithdrawFeeReceiverNotSet);
-        }
-
-        // Check withdraw fee ratio
-        let withdraw_fee_ratio: Option<i128> =
-            env.storage().instance().get(&DataKey::WithdrawFeeRatio);
-        if withdraw_fee_ratio.map_or(true, |r| r <= 0) {
-            panic_with_error!(env, VaultError::WithdrawFeeRatioNotSet);
-        }
-
-        // Check withdraw currency
-        if env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::WithdrawCurrency)
-            .is_none()
-        {
-            panic_with_error!(env, VaultError::WithdrawCurrencyNotSet);
-        }
-
-        // Check token contract
-        if env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::TokenContract)
-            .is_none()
-        {
-            panic_with_error!(env, VaultError::TokenContractNotSet);
-        }
-    }
-
     /// Get token contract address
     fn get_token_contract_internal(env: &Env) -> Address {
         env.storage()
             .instance()
             .get(&DataKey::TokenContract)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::TokenContractNotSet))
+            .unwrap() 
     }
 
 
@@ -1172,6 +1086,21 @@ impl SolvBTCVault {
         // Hash the concatenated data
         let request_key_hash = env.crypto().keccak256(&data);
         Bytes::from_array(env, &request_key_hash.to_array())
+    }
+
+    /// Calculate withdrawal amount based on shares, nav and decimals
+    fn calculate_withdraw_amount(
+        env: &Env,
+        shares: i128,
+        nav: i128,
+        shares_token_decimals: u32,
+        withdraw_token_decimals: u32,
+        nav_decimals: u32,
+    ) -> i128 {
+        let shares_precision = 10_i128.pow(shares_token_decimals);
+        let nav_precision = 10_i128.pow(nav_decimals);
+        let withdraw_precision = 10_i128.pow(withdraw_token_decimals);
+        (shares * nav * withdraw_precision) / (nav_precision * shares_precision)
     }
 }
 

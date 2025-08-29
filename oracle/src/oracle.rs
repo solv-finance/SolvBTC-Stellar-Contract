@@ -148,7 +148,6 @@ impl NavManagerManagement for SolvBtcOracle {
     /// Set NAV value (NAV manager only)
     fn set_nav_by_manager(env: Env, nav: i128) {
         let nav_manager: Address = Self::require_nav_manager(&env);
-        nav_manager.require_auth();
 
         if nav <= 0 {
             panic_with_error!(&env, OracleError::InvalidArgument);
@@ -170,7 +169,7 @@ impl NavManagerManagement for SolvBtcOracle {
         // Publish event
         env.events().publish(
             (Symbol::new(&env, "set_nav"),),
-            (Self::get_nav_manager_internal(&env), current_nav, nav),
+            (nav_manager, current_nav, nav),
         );
     }
 }
@@ -191,13 +190,9 @@ impl SolvBtcOracle {
 
     /// Verify NAV manager permission
     fn require_nav_manager(env: &Env) -> Address {
-        let nav_manager_opt: Option<Address> = env.storage().instance().get(&DataKey::NavManager);
-        match nav_manager_opt {
-            Some(nav_manager) => nav_manager,
-            None => {
-                panic_with_error!(env, OracleError::NavManagerNotSet);
-            }
-        }
+        let nav_manager = Self::get_nav_manager_internal(env);
+        nav_manager.require_auth();
+        nav_manager
     }
 
     /// Validate if NAV change is within allowed range based on precision (internal function)
