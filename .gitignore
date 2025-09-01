@@ -1,0 +1,44 @@
+# Rust build artifacts
+/target/
+**/target/
+Cargo.lock
+
+# Editor and IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Environment variables and keys
+.env
+.env.local
+*.pem
+*.key
+.stellar/
+
+# Log files
+*.log
+
+# WASM related
+*.wasm
+!target/wasm32-unknown-unknown/optimized/*.wasm
+
+# Temporary files
+*.tmp
+*.bak
+
+# Others
+node_modules/
+js/*/dist/
+js/*/node_modules/
+js-bindings/
+**/js-bindings/
+**/config.js
+
+# Ignore all test_snapshots directories
+**/test_snapshots/ 
