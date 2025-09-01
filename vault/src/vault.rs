@@ -548,6 +548,18 @@ impl CurrencyManagement for SolvBTCVault {
     fn get_withdraw_currency(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::WithdrawCurrency)
     }
+
+    #[only_owner]
+    fn set_withdraw_currency_by_admin(env: Env, withdraw_currency: Address) {
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawCurrency, &withdraw_currency);
+
+        env.events().publish(
+            (Symbol::new(&env, "set_withdraw_currency"), withdraw_currency.clone()),
+            Self::get_admin_internal(&env)
+        );
+    }
 }
 
 // ==================== System management function implementation ====================

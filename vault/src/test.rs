@@ -571,6 +571,40 @@ fn test_set_treasurer_by_admin() {
     assert_ne!(client.get_treasurer(), treasurer);
 }
 
+#[test]
+fn test_set_withdraw_currency_by_admin_updates_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+
+    // 初始化并读取初始 withdraw currency
+    let _config = initialize_vault_with_defaults(&env, &client);
+    let initial = client.get_withdraw_currency().unwrap();
+
+    // 设置新的 withdraw currency
+    let new_withdraw_currency = Address::generate(&env);
+    client.set_withdraw_currency_by_admin(&new_withdraw_currency);
+
+    // 校验状态已更新
+    let updated = client.get_withdraw_currency().unwrap();
+    assert_eq!(updated, new_withdraw_currency);
+    assert_ne!(updated, initial);
+}
+
+#[test]
+#[should_panic]
+fn test_set_withdraw_currency_requires_owner_should_panic() {
+    let env = Env::default();
+    // 不开启 mock_all_auths 以触发 only_owner 授权检查
+
+    let (client, _, _) = create_vault_contract(&env);
+    let _ = initialize_vault_with_defaults(&env, &client);
+
+    let new_withdraw_currency = Address::generate(&env);
+    client.set_withdraw_currency_by_admin(&new_withdraw_currency);
+}
+
 
 #[test]
 fn test_set_withdraw_fee_ratio_by_admin() {
