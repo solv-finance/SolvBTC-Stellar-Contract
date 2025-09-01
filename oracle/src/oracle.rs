@@ -1,25 +1,20 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address,
-    BytesN, Env, Symbol,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, BytesN, Env,
+    Symbol,
 };
-
+use stellar_default_impl_macro::default_impl;
 use stellar_ownable::{self as ownable, Ownable};
 use stellar_ownable_macro::only_owner;
 use stellar_upgradeable::UpgradeableInternal;
 use stellar_upgradeable_macros::Upgradeable;
-use stellar_default_impl_macro::default_impl;
-
-pub use crate::traits::{
-    NavAdminManagement, NavManagerManagement, NavQuery,
-};
 
 use crate::dependencies::VaultClient;
+pub use crate::traits::{NavAdminManagement, NavManagerManagement, NavQuery};
 
 // ==================== Constants Definition ====================
 
 /// Maximum NAV decimal places
 const MAX_NAV_DECIMALS: u32 = 18;
-
 
 // ==================== Error Type Definition ====================
 
@@ -33,6 +28,8 @@ pub enum OracleError {
     NavChangeExceedsLimit = 202,
     // NAV manager not set
     NavManagerNotSet = 203,
+    // Insufficient permissions
+    Unauthorized = 204,
 }
 
 // ==================== Data Key Definition ====================
@@ -72,7 +69,7 @@ impl SolvBtcOracle {
 
         // Set owner using stellar-ownable
         ownable::set_owner(env, &admin);
-        
+
         // Set initial data
         env.storage()
             .instance()
@@ -174,7 +171,6 @@ impl NavManagerManagement for SolvBtcOracle {
 // ==================== Internal Helper Functions ====================
 
 impl SolvBtcOracle {
-
     /// Get admin address (internal helper)
     fn get_admin_internal(env: &Env) -> Address {
         ownable::get_owner(env).unwrap()
@@ -182,7 +178,10 @@ impl SolvBtcOracle {
 
     /// Get NAV manager address
     fn get_nav_manager_internal(env: &Env) -> Address {
-        env.storage().instance().get(&DataKey::NavManager).unwrap_or_else(|| panic_with_error!(env, OracleError::NavManagerNotSet))
+        env.storage()
+            .instance()
+            .get(&DataKey::NavManager)
+            .unwrap_or_else(|| panic_with_error!(env, OracleError::NavManagerNotSet))
     }
 
     /// Verify NAV manager permission
@@ -219,7 +218,7 @@ impl UpgradeableInternal for SolvBtcOracle {
         operator.require_auth();
         let owner = ownable::get_owner(e).unwrap();
         if *operator != owner {
-            panic_with_error!(e, OracleError::InvalidArgument); // reuse existing error space
+            panic_with_error!(e, OracleError::Unauthorized); // reuse existing error space
         }
     }
 }

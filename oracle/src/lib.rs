@@ -1,9 +1,9 @@
 #![no_std]
 
+mod dependencies;
 mod oracle;
 mod test;
 mod traits;
-mod dependencies;
 
 pub use oracle::*;
 pub use traits::*;

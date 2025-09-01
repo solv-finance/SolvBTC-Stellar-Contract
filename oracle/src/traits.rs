@@ -35,4 +35,3 @@ pub trait NavManagerManagement {
     /// Set NAV by manager
     fn set_nav_by_manager(env: Env, nav: i128);
 }
-

@@ -1,13 +1,15 @@
 #![cfg(test)]
 #![allow(unused_imports, unused_variables, dead_code)]
 extern crate std;
-use super::*;
 // unused imports removed
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, MockAuth, MockAuthInvoke}, 
+    contract, contractimpl, contracttype,
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, MockAuth, MockAuthInvoke},
     Address, Bytes, BytesN, Env, IntoVal, String, Symbol,
 };
-use soroban_sdk::xdr::ToXdr;
+
+use super::*;
 
 // Helper functions for creating contract and client
 fn create_vault_contract(env: &Env) -> (SolvBTCVaultClient, Address, Address) {
@@ -51,8 +53,7 @@ fn add_currency(env: &Env, client: &SolvBTCVaultClient) -> Address {
     currency
 }
 
-// set withdraw currency 
-
+// set withdraw currency
 
 // Helper function: Create real Ed25519 public key address
 fn create_mock_public_key(env: &Env) -> Address {
@@ -181,10 +182,10 @@ fn create_custom_init_config(
 fn initialize_vault_with_currency(env: &Env, client: &SolvBTCVaultClient) -> (TestConfig, Address) {
     let config = read_config_from_chain(env, client);
     let currency = Address::generate(env);
-    
+
     // Add currency (simulated - in real scenario this would require proper setup)
     // client.add_currency_by_admin(&currency);
-    
+
     (config, currency)
 }
 
@@ -274,10 +275,10 @@ fn test_withdraw_invalid_signature_content() {
     client.add_currency_by_admin(&currency);
     let fee_receiver = Address::generate(&env);
     client.set_withdraw_fee_recv_by_admin(&fee_receiver);
-    
+
     // Note: This test is designed to test signature validation.
     // We expect it to fail at signature verification (error #328)
-    
+
     let target_amount = 1000i128;
     let nav = 50000i128;
     let request_hash = create_request_hash(&env, 1);
@@ -326,7 +327,7 @@ fn test_basic_initialize_success() {
 
     // Verify initialization
     assert_eq!(client.get_admin(), config.admin);
-    // minter_manager 
+    // minter_manager
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
     assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
@@ -341,13 +342,13 @@ fn test_initialize_with_default_config() {
     env.mock_all_auths();
 
     let (client, _, _) = create_vault_contract(&env);
-    
+
     // Use new configuration-based initialization - one line!
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Verify initialization
     assert_eq!(client.get_admin(), config.admin);
-    // minter_manager 
+    // minter_manager
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
     assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
@@ -360,7 +361,7 @@ fn test_initialize_with_custom_config() {
     env.mock_all_auths();
 
     let (client, _, _) = create_vault_contract(&env);
-    
+
     // Create custom configuration - only modify needed parameters
     let custom_admin = Address::generate(&env);
     let _config = create_custom_init_config(&env, Some(custom_admin.clone()), Some(200));
@@ -375,9 +376,12 @@ fn test_initialize_with_custom_domain() {
     env.mock_all_auths();
 
     let (client, _, _) = create_vault_contract(&env);
-    
+
     // Setter removed; ensure default domain remains unchanged
-    assert_eq!(client.get_eip712_domain_name(), String::from_str(&env, "Solv Vault Withdraw"));
+    assert_eq!(
+        client.get_eip712_domain_name(),
+        String::from_str(&env, "Solv Vault Withdraw")
+    );
 }
 
 #[test]
@@ -495,13 +499,7 @@ fn test_withdraw_with_mock_pubkey() {
     let signature = create_mock_signature(&env);
 
     // Should fail due to invalid signature (not properly signed)
-    client.withdraw(
-        &user,
-        &target_amount,
-        &nav,
-        &request_hash,
-        &signature,
-    );
+    client.withdraw(&user, &target_amount, &nav, &request_hash, &signature);
 }
 
 // ==================== Basic Tests ====================
@@ -604,7 +602,6 @@ fn test_set_withdraw_currency_requires_owner_should_panic() {
     let new_withdraw_currency = Address::generate(&env);
     client.set_withdraw_currency_by_admin(&new_withdraw_currency);
 }
-
 
 #[test]
 fn test_set_withdraw_fee_ratio_by_admin() {
@@ -714,9 +711,23 @@ impl MockToken {
         1_000_000_000_000_000_000i128
     }
 
-    pub fn approve(_env: Env, _owner: Address, _spender: Address, _amount: i128, _live_until_ledger: u32) {}
+    pub fn approve(
+        _env: Env,
+        _owner: Address,
+        _spender: Address,
+        _amount: i128,
+        _live_until_ledger: u32,
+    ) {
+    }
 
-    pub fn transfer_from(_env: Env, _spender: Address, _from: Address, _to: Address, _amount: i128) {}
+    pub fn transfer_from(
+        _env: Env,
+        _spender: Address,
+        _from: Address,
+        _to: Address,
+        _amount: i128,
+    ) {
+    }
 
     pub fn transfer(_env: Env, _from: Address, _to: Address, _amount: i128) {}
 
@@ -734,18 +745,26 @@ pub struct MockOracle;
 impl MockOracle {
     pub fn get_nav(env: Env) -> i128 {
         // Default NAV: 1.0 with 8 decimal places
-        env.storage().instance().get(&MockOracleDataKey::Nav).unwrap_or(100000000)
+        env.storage()
+            .instance()
+            .get(&MockOracleDataKey::Nav)
+            .unwrap_or(100000000)
     }
 
     pub fn get_nav_decimals(env: Env) -> u32 {
         // Default decimals: 8
-        env.storage().instance().get(&MockOracleDataKey::Decimals).unwrap_or(8)
+        env.storage()
+            .instance()
+            .get(&MockOracleDataKey::Decimals)
+            .unwrap_or(8)
     }
 
     /// Configure NAV and decimals for tests
     pub fn set_nav_and_decimals(env: Env, nav: i128, decimals: u32) {
         env.storage().instance().set(&MockOracleDataKey::Nav, &nav);
-        env.storage().instance().set(&MockOracleDataKey::Decimals, &decimals);
+        env.storage()
+            .instance()
+            .set(&MockOracleDataKey::Decimals, &decimals);
     }
 }
 
@@ -944,7 +963,8 @@ fn test_withdraw_success_various_fee_ratios() {
     client.set_withdraw_verifier_by_admin(&verifier_public_key);
 
     // Try a few fee ratios
-    for fee in [300i128, 1000i128] { // 3%, 10%
+    for fee in [300i128, 1000i128] {
+        // 3%, 10%
         client.set_withdraw_fee_ratio_by_admin(&fee);
 
         let user = Address::generate(&env);
@@ -961,7 +981,9 @@ fn test_withdraw_success_various_fee_ratios() {
         eip712.append(&msg_hash);
 
         let mut buf = heapless::Vec::<u8, 1024>::new();
-        for i in 0..eip712.len() { buf.push(eip712.get(i).unwrap()).ok(); }
+        for i in 0..eip712.len() {
+            buf.push(eip712.get(i).unwrap()).ok();
+        }
         let sig = sk.sign(&buf);
         let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
 
@@ -1000,7 +1022,9 @@ fn test_withdraw_success_precision_scenarios() {
         eip712.append(&msg_hash);
 
         let mut buf = heapless::Vec::<u8, 1024>::new();
-        for i in 0..eip712.len() { buf.push(eip712.get(i).unwrap()).ok(); }
+        for i in 0..eip712.len() {
+            buf.push(eip712.get(i).unwrap()).ok();
+        }
         let sig = sk.sign(&buf);
         let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
 
@@ -1009,14 +1033,14 @@ fn test_withdraw_success_precision_scenarios() {
     }
 }
 
-use ed25519_dalek::{SigningKey, VerifyingKey, Signer};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use stellar_strkey::ed25519::PublicKey as StrKeyPublicKey;
 
 fn fixed_keypair() -> (SigningKey, VerifyingKey) {
     let seed: [u8; 32] = [
-        0xef, 0xab, 0x69, 0x6a, 0x8c, 0xaf, 0x7a, 0x70, 0xc4, 0x2e, 0xe5, 0x39, 0x70, 0x5b,
-        0x4a, 0x74, 0x7e, 0x5d, 0x6e, 0x1b, 0xb2, 0x6b, 0x3d, 0xd5, 0x2e, 0x38, 0xba, 0xf7,
-        0x29, 0xe3, 0xdb, 0x3b,
+        0xef, 0xab, 0x69, 0x6a, 0x8c, 0xaf, 0x7a, 0x70, 0xc4, 0x2e, 0xe5, 0x39, 0x70, 0x5b, 0x4a,
+        0x74, 0x7e, 0x5d, 0x6e, 0x1b, 0xb2, 0x6b, 0x3d, 0xd5, 0x2e, 0x38, 0xba, 0xf7, 0x29, 0xe3,
+        0xdb, 0x3b,
     ];
     let sk = SigningKey::from(seed);
     let vk = VerifyingKey::from(&sk);
@@ -1027,32 +1051,39 @@ fn public_key_from_verifying_key(env: &Env, vk: &VerifyingKey) -> BytesN<32> {
     BytesN::from_array(env, &vk.to_bytes())
 }
 
-fn build_withdraw_message(env: &Env, user: &Address, target_amount: i128, target_token: &Address, nav: i128, request_hash: &Bytes) -> Bytes {
+fn build_withdraw_message(
+    env: &Env,
+    user: &Address,
+    target_amount: i128,
+    target_token: &Address,
+    nav: i128,
+    request_hash: &Bytes,
+) -> Bytes {
     let mut encoded = Bytes::new(env);
-    
+
     // Add network ID (chain ID)
     let network_id = env.ledger().network_id();
     encoded.append(&network_id.into());
-    
+
     // Add action (fixed as "withdraw")
     let action_bytes = Bytes::from_slice(env, b"withdraw");
     encoded.append(&action_bytes);
-    
+
     // Add user address
     encoded.append(&user.to_xdr(env));
-    
+
     // Add target token
     encoded.append(&target_token.to_xdr(env));
-    
+
     // Add target amount (shares)
     encoded.append(&Bytes::from_array(env, &target_amount.to_be_bytes()));
-    
+
     // Add NAV value
     encoded.append(&Bytes::from_array(env, &nav.to_be_bytes()));
-    
+
     // Add request hash
     encoded.append(request_hash);
-    
+
     encoded
 }
 
@@ -1085,7 +1116,9 @@ fn test_withdraw_success_end_to_end() {
 
     // Sign
     let mut buf = heapless::Vec::<u8, 1024>::new();
-    for i in 0..eip712.len() { buf.push(eip712.get(i).unwrap()).ok(); }
+    for i in 0..eip712.len() {
+        buf.push(eip712.get(i).unwrap()).ok();
+    }
     let sig = sk.sign(&buf);
     let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
 
@@ -1110,7 +1143,7 @@ fn test_treasurer_deposit() {
     // This test verifies that the treasurer_deposit function exists and can be called
     // In a real test environment, we would need proper token contracts
     // For now, we just verify the interface exists without panics from missing dependencies
-    
+
     // Note: The actual call may fail due to missing token contract setup,
     // but the function should be callable and properly defined
     // This is sufficient to verify the interface contract
@@ -1136,12 +1169,11 @@ fn test_withdraw_request() {
     // This test verifies that the withdraw_request function exists and can be called
     // In a real test environment, we would need proper oracle and token contracts
     // For now, we just verify the interface exists without panics from missing dependencies
-    
+
     // Note: The actual call may fail due to missing oracle contract setup,
     // but the function should be callable and properly defined
     // This is sufficient to verify the interface contract
 }
-
 
 /// Test add currency authorization check
 #[test]
@@ -1149,18 +1181,18 @@ fn test_add_currency_authorization() {
     let env = Env::default();
 
     let (client, _, _) = create_vault_contract(&env);
-    
+
     // Initialize with default configuration (using admin permission)
     env.mock_all_auths();
     let config = initialize_vault_with_defaults(&env, &client);
     let admin = config.admin;
-    
+
     // Clear authorization records from initialization
     // Don't call env.mock_all_auths() again to test actual authorization
-    
+
     let currency = Address::generate(&env);
     client.add_currency_by_admin(&currency);
-    
+
     // Verify the admin authorization was required
     assert_eq!(
         env.auths(),
@@ -1187,10 +1219,10 @@ fn test_add_currency_already_exists() {
 
     let (client, _token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
     let currency = Address::generate(&env);
-    
+
     // Add currency first time
     client.add_currency_by_admin(&currency);
-    
+
     // Try to add same currency again
     client.add_currency_by_admin(&currency);
 }
@@ -1204,7 +1236,7 @@ fn test_remove_currency_not_exists() {
 
     let (client, _token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
     let currency = Address::generate(&env);
-    
+
     client.remove_currency_by_admin(&currency);
 }
 
@@ -1223,8 +1255,6 @@ fn test_remove_currency_when_map_absent_triggers_map_new() {
     client.remove_currency_by_admin(&random_currency);
 }
 
-
-
 /// Test deposit with unsupported currency
 #[test]
 #[should_panic(expected = "HostError: Error(Contract, #301)")]
@@ -1236,7 +1266,7 @@ fn test_deposit_unsupported_currency() {
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
-    
+
     client.deposit(&user, &currency, &1000);
 }
 
@@ -1251,10 +1281,10 @@ fn test_deposit_invalid_amount_zero() {
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
-    
+
     // Add currency first
     client.add_currency_by_admin(&currency);
-    
+
     client.deposit(&user, &currency, &0);
 }
 
@@ -1269,10 +1299,10 @@ fn test_deposit_invalid_amount_negative() {
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
-    
+
     // Add currency first
     client.add_currency_by_admin(&currency);
-    
+
     client.deposit(&user, &currency, &-100);
 }
 
@@ -1287,7 +1317,7 @@ fn test_withdraw_request_invalid_amount_zero() {
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let request_hash = create_request_hash(&env, 1);
-    
+
     client.withdraw_request(&user, &0, &request_hash);
 }
 
@@ -1302,10 +1332,9 @@ fn test_withdraw_request_invalid_amount_negative() {
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let request_hash = create_request_hash(&env, 1);
-    
+
     client.withdraw_request(&user, &-100, &request_hash);
 }
-
 
 /// Test treasurer deposit with invalid amount
 #[test]
@@ -1316,7 +1345,7 @@ fn test_treasurer_deposit_invalid_amount_zero() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     client.treasurer_deposit(&0);
 }
 
@@ -1329,7 +1358,7 @@ fn test_treasurer_deposit_invalid_amount_negative() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     client.treasurer_deposit(&-100);
 }
 
@@ -1342,13 +1371,13 @@ fn test_add_currency_exceeds_max_limit() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Add maximum number of currencies (10)
     for _i in 0..10 {
         let currency = Address::generate(&env);
         client.add_currency_by_admin(&currency);
     }
-    
+
     // Try to add one more - should fail
     let extra_currency = Address::generate(&env);
     client.add_currency_by_admin(&extra_currency);
@@ -1362,12 +1391,12 @@ fn test_eip712_domain_queries() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     let domain_name = client.get_eip712_domain_name();
     let domain_version = client.get_eip712_domain_version();
     let chain_id = client.get_eip712_chain_id();
     let domain_separator = client.get_eip712_domain_separator();
-    
+
     assert_eq!(domain_name, String::from_str(&env, "Solv Vault Withdraw"));
     assert_eq!(domain_version, String::from_str(&env, "1"));
     assert!(!chain_id.is_empty());
@@ -1382,7 +1411,7 @@ fn test_admin_address_query() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     let admin = client.get_admin();
     assert_eq!(admin, config.admin);
 }
@@ -1396,18 +1425,16 @@ fn test_is_currency_supported() {
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     let currency = Address::generate(&env);
-    
+
     // Initially not supported
     assert!(!client.is_currency_supported(&currency));
-    
+
     // Add currency
     client.add_currency_by_admin(&currency);
-    
+
     // Now should be supported
     assert!(client.is_currency_supported(&currency));
 }
-
-
 
 /// Test initialize with config convenience function
 #[test]
@@ -1431,11 +1458,14 @@ fn test_vault_operations_traits_coverage() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Test various trait methods are accessible
     assert_eq!(client.get_withdraw_fee_ratio(), 100);
-    assert_eq!(client.get_withdraw_fee_receiver(), config.withdraw_fee_receiver);
-    
+    assert_eq!(
+        client.get_withdraw_fee_receiver(),
+        config.withdraw_fee_receiver
+    );
+
     let currencies = client.get_supported_currencies();
     assert_eq!(currencies.len(), 0); // No currencies added yet
 }
@@ -1448,7 +1478,7 @@ fn test_system_management_traits() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Test all getter functions
     assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
     assert_eq!(client.get_treasurer(), config.treasurer);
@@ -1475,7 +1505,7 @@ fn test_maximum_fee_ratio_initialization() {
 
     let (client, _, _) = create_vault_contract(&env);
     let _ = create_custom_init_config(&env, None, Some(10000)); // 100%
-    // set to 10000 by setter
+                                                                // set to 10000 by setter
     client.set_withdraw_fee_ratio_by_admin(&10000);
     assert_eq!(client.get_withdraw_fee_ratio(), 10000);
 }
@@ -1493,10 +1523,10 @@ fn test_deposit_oracle_not_set() {
 
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
-    
+
     // Add currency first
     client.add_currency_by_admin(&currency);
-    
+
     // This should fail because oracle doesn't have proper interface
     client.deposit(&user, &currency, &1000);
 }
@@ -1509,20 +1539,19 @@ fn test_deposit_zero_withdraw_fee_ratio() {
     env.mock_all_auths();
 
     let (client, _, _) = create_vault_contract(&env);
-    
+
     // Initialize with zero fee ratio
     let _ = create_custom_init_config(&env, None, Some(0));
-    
+
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
-    
+
     // Add currency first
     client.add_currency_by_admin(&currency);
-    
+
     // This should fail because withdraw fee ratio is 0
     client.deposit(&user, &currency, &1000);
 }
-
 
 /// Test withdraw currency queries when none is set
 #[test]
@@ -1532,7 +1561,7 @@ fn test_withdraw_currency_not_set() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Constructor sets withdraw currency; should not be None
     assert!(client.get_withdraw_currency().is_some());
 }
@@ -1545,17 +1574,17 @@ fn test_eip712_advanced_functions() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Test EIP712 functions
     let chain_id = client.get_eip712_chain_id();
     let domain_separator = client.get_eip712_domain_separator();
-    
+
     // Chain ID should be 32 bytes (from env.ledger().network_id())
     assert_eq!(chain_id.len(), 32);
-    
+
     // Domain separator should be 32 bytes (SHA256 hash)
     assert_eq!(domain_separator.len(), 32);
-    
+
     // Domain separator should be deterministic - call again should get same result
     let domain_separator2 = client.get_eip712_domain_separator();
     assert_eq!(domain_separator, domain_separator2);
@@ -1569,31 +1598,31 @@ fn test_currency_supported_function() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     let currency1 = Address::generate(&env);
     let currency2 = Address::generate(&env);
-    
+
     // Initially neither should be supported
     assert!(!client.is_currency_supported(&currency1));
     assert!(!client.is_currency_supported(&currency2));
-    
+
     // Add one currency
     client.add_currency_by_admin(&currency1);
-    
+
     // Now only currency1 should be supported
     assert!(client.is_currency_supported(&currency1));
     assert!(!client.is_currency_supported(&currency2));
-    
+
     // Add second currency
     client.add_currency_by_admin(&currency2);
-    
+
     // Both should be supported
     assert!(client.is_currency_supported(&currency1));
     assert!(client.is_currency_supported(&currency2));
-    
+
     // Remove first currency
     client.remove_currency_by_admin(&currency1);
-    
+
     // Only currency2 should be supported
     assert!(!client.is_currency_supported(&currency1));
     assert!(client.is_currency_supported(&currency2));
@@ -1607,17 +1636,23 @@ fn test_withdraw_fee_receiver_management() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Initial fee receiver should be set to config value
-    assert_eq!(client.get_withdraw_fee_receiver(), config.withdraw_fee_receiver);
-    
+    assert_eq!(
+        client.get_withdraw_fee_receiver(),
+        config.withdraw_fee_receiver
+    );
+
     // Set new fee receiver
     let new_fee_receiver = Address::generate(&env);
     client.set_withdraw_fee_recv_by_admin(&new_fee_receiver);
-    
+
     // Verify it was updated
     assert_eq!(client.get_withdraw_fee_receiver(), new_fee_receiver);
-    assert_ne!(client.get_withdraw_fee_receiver(), config.withdraw_fee_receiver);
+    assert_ne!(
+        client.get_withdraw_fee_receiver(),
+        config.withdraw_fee_receiver
+    );
 }
 
 /// Test all system management setters
@@ -1628,20 +1663,20 @@ fn test_complete_system_management() {
 
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Test setting all system components
     let new_oracle = Address::generate(&env);
     let new_treasurer = Address::generate(&env);
     let new_verifier = BytesN::from_array(&env, &[4u8; 32]);
     let new_fee_receiver = Address::generate(&env);
-    
+
     // Set new addresses
     client.set_oracle_by_admin(&new_oracle);
     client.set_treasurer_by_admin(&new_treasurer);
     client.set_withdraw_verifier_by_admin(&new_verifier);
     client.set_withdraw_fee_recv_by_admin(&new_fee_receiver);
     client.set_withdraw_fee_ratio_by_admin(&250);
-    
+
     // Verify all were set correctly
     assert_eq!(client.get_oracle(), new_oracle);
     assert_eq!(client.get_treasurer(), new_treasurer);
@@ -1650,20 +1685,18 @@ fn test_complete_system_management() {
     assert_eq!(client.get_withdraw_fee_ratio(), 250);
 }
 
-
-
 // ==================== Traits Coverage Tests ====================
 
 /// Test WithdrawRequest data structure coverage
 #[test]
 fn test_withdraw_request_structure() {
     let env = Env::default();
-    
+
     let user = Address::generate(&env);
     let request_hash = create_request_hash(&env, 1);
     let signature = create_mock_signature(&env);
     let signature_bytes = Bytes::from_slice(&env, &signature.to_array());
-    
+
     // Create WithdrawRequest structure to test traits.rs coverage
     let withdraw_request = WithdrawRequest {
         user: user.clone(),
@@ -1673,7 +1706,7 @@ fn test_withdraw_request_structure() {
         timestamp: 1700000000u64,
         signature: signature_bytes.clone(),
     };
-    
+
     // Test Debug trait (clone, eq, etc.)
     let withdraw_request2 = withdraw_request.clone();
     assert_eq!(withdraw_request, withdraw_request2);
@@ -1689,7 +1722,7 @@ fn test_withdraw_request_structure() {
 #[test]
 fn test_initialize_config_structure() {
     let env = Env::default();
-    
+
     // Create local test config to validate copy/compare behavior
     let config = TestConfig {
         admin: Address::generate(&env),
@@ -1699,7 +1732,7 @@ fn test_initialize_config_structure() {
         withdraw_fee_ratio: 250,
         withdraw_fee_receiver: Address::generate(&env),
     };
-    
+
     // Test Debug trait (clone)
     let config2 = TestConfig {
         admin: config.admin.clone(),
@@ -1718,55 +1751,53 @@ fn test_initialize_config_structure() {
 #[test]
 fn test_event_structures_coverage() {
     let env = Env::default();
-    
+
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
     let admin = Address::generate(&env);
     let request_hash = create_request_hash(&env, 1);
-    
+
     // Test DepositEvent
     let deposit_event = DepositEvent {
         amount: 1000,
         minted_tokens: 900,
         nav: 100_000_000,
     };
-    
+
     let deposit_event2 = deposit_event.clone();
     assert_eq!(deposit_event, deposit_event2);
     assert_eq!(deposit_event.amount, 1000);
     assert_eq!(deposit_event.minted_tokens, 900);
     assert_eq!(deposit_event.nav, 100_000_000);
-    
+
     // Test WithdrawEvent
     let withdraw_event = WithdrawEvent {
         amount: 950,
         fee: 5,
         request_hash: Bytes::from_slice(&env, b"test_request_hash"),
     };
-    
+
     let withdraw_event2 = withdraw_event.clone();
     assert_eq!(withdraw_event, withdraw_event2);
     assert_eq!(withdraw_event.amount, 950);
     assert_eq!(withdraw_event.fee, 5);
-    
+
     // Test SetAllowedCurrencyEvent
-    let set_allowed_currency_event = SetAllowedCurrencyEvent {
-        allowed: true,
-    };
-    
+    let set_allowed_currency_event = SetAllowedCurrencyEvent { allowed: true };
+
     let set_allowed_currency_event2 = set_allowed_currency_event.clone();
     assert_eq!(set_allowed_currency_event, set_allowed_currency_event2);
     assert_eq!(set_allowed_currency_event.allowed, true);
-    
+
     // Test CurrencyRemovedEvent
     let currency_removed_event = CurrencyRemovedEvent {
         admin: admin.clone(),
     };
-    
+
     let currency_removed_event2 = currency_removed_event.clone();
     assert_eq!(currency_removed_event, currency_removed_event2);
     assert_eq!(currency_removed_event.admin, admin);
-    
+
     // Test WithdrawRequestEvent
     let withdraw_request_event = WithdrawRequestEvent {
         token_contract: currency.clone(),
@@ -1775,18 +1806,16 @@ fn test_event_structures_coverage() {
         nav: 100_000_000,
         amount: 500,
     };
-    
+
     let withdraw_request_event2 = withdraw_request_event.clone();
     assert_eq!(withdraw_request_event, withdraw_request_event2);
     assert_eq!(withdraw_request_event.shares, 500);
     assert_eq!(withdraw_request_event.token_contract, currency);
     assert_eq!(withdraw_request_event.nav, 100_000_000);
-    
+
     // Test TreasurerDepositEvent
-    let treasurer_deposit_event = TreasurerDepositEvent {
-        amount: 2000,
-    };
-    
+    let treasurer_deposit_event = TreasurerDepositEvent { amount: 2000 };
+
     let treasurer_deposit_event2 = treasurer_deposit_event.clone();
     assert_eq!(treasurer_deposit_event, treasurer_deposit_event2);
     assert_eq!(treasurer_deposit_event.amount, 2000);
@@ -1796,11 +1825,11 @@ fn test_event_structures_coverage() {
 #[test]
 fn test_eip712_domain_structure() {
     let env = Env::default();
-    
+
     let chain_id = Bytes::from_array(&env, &[1u8; 32]);
     let salt = Bytes::from_array(&env, &[2u8; 32]);
     let contract_address = Address::generate(&env);
-    
+
     // Create EIP712Domain to test coverage
     let domain = EIP712Domain {
         name: String::from_str(&env, "TestDomain"),
@@ -1809,7 +1838,7 @@ fn test_eip712_domain_structure() {
         verifying_contract: contract_address.clone(),
         salt: salt.clone(),
     };
-    
+
     // Test traits
     let domain2 = domain.clone();
     assert_eq!(domain, domain2);
@@ -1818,7 +1847,7 @@ fn test_eip712_domain_structure() {
     assert_eq!(domain.chain_id, chain_id);
     assert_eq!(domain.verifying_contract, contract_address);
     assert_eq!(domain.salt, salt);
-    
+
     // Test ordering traits (PartialOrd, Ord)
     let domain3 = EIP712Domain {
         name: String::from_str(&env, "AnotherDomain"), // Different name for ordering test
@@ -1827,7 +1856,7 @@ fn test_eip712_domain_structure() {
         verifying_contract: contract_address.clone(),
         salt: salt.clone(),
     };
-    
+
     // This tests PartialOrd and Ord implementations
     assert_ne!(domain, domain3);
 }
@@ -1839,24 +1868,24 @@ fn test_withdraw_status_enum() {
     let status1 = WithdrawStatus::NotExist;
     let status2 = WithdrawStatus::Pending;
     let status3 = WithdrawStatus::Done;
-    
+
     // Test Clone trait
     let status1_clone = status1.clone();
     let status2_clone = status2.clone();
     let status3_clone = status3.clone();
-    
+
     // Test PartialEq trait
     assert_eq!(status1, status1_clone);
     assert_eq!(status2, status2_clone);
     assert_eq!(status3, status3_clone);
     assert_ne!(status1, status2);
     assert_ne!(status2, status3);
-    
+
     // Test enum values
     assert_eq!(status1 as u32, 0);
     assert_eq!(status2 as u32, 1);
     assert_eq!(status3 as u32, 2);
-    
+
     // Test ordering traits with fresh instances
     assert!(WithdrawStatus::NotExist < WithdrawStatus::Pending);
     assert!(WithdrawStatus::Pending < WithdrawStatus::Done);
@@ -1871,11 +1900,11 @@ fn test_withdraw_status_enum() {
 fn test_deposit_oracle_not_configured() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
-    
+
     // Try to use deposit without proper configuration (oracle not set)
     client.deposit(&user, &currency, &1000);
 }
@@ -1888,16 +1917,19 @@ fn test_deposit_oracle_not_configured() {
 fn test_withdraw_invalid_request_status() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _token, _oracle, _treasurer) = create_vault_with_mocks(&env);
     let user = Address::generate(&env);
     let request_hash = Bytes::from_array(&env, &[1u8; 32]);
     let mock_signature = BytesN::<64>::from_array(&env, &[0u8; 64]);
     let nav = 100_000_000i128;
-    
+
     // Try to withdraw without creating request first
     // Call and expect InvalidRequestStatus (#27)
-    #[allow(unused_must_use)] { client.withdraw(&user, &1000, &nav, &request_hash, &mock_signature); }
+    #[allow(unused_must_use)]
+    {
+        client.withdraw(&user, &1000, &nav, &request_hash, &mock_signature);
+    }
 }
 
 /// Zero withdraw fee ratio should not panic for withdraw_request
@@ -1910,7 +1942,10 @@ fn test_withdraw_request_with_zero_withdraw_fee_ratio_allows_operation() {
 
     let user = Address::generate(&env);
     let request_hash = create_request_hash(&env, 777);
-    #[allow(unused_must_use)] { client.withdraw_request(&user, &1000, &request_hash); }
+    #[allow(unused_must_use)]
+    {
+        client.withdraw_request(&user, &1000, &request_hash);
+    }
 }
 
 /// Zero withdraw fee ratio should not trigger config panic; still fails with no request
@@ -1964,13 +1999,12 @@ fn test_withdraw_invalid_nav_zero() {
     client.withdraw(&user, &shares, &nav, &request_hash, &signature);
 }
 
-
 /// Test treasurer deposit with comprehensive validation
 #[test]
 fn test_treasurer_deposit_comprehensive_validation() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _token, _oracle, _treasurer) = create_vault_with_mocks(&env);
     let deposit_amount = 5_000_000i128; // 0.05 units
     client.treasurer_deposit(&deposit_amount);
@@ -1981,34 +2015,34 @@ fn test_treasurer_deposit_comprehensive_validation() {
 fn test_internal_functions_through_public_apis() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Test get functions that exercise internal functions
     let admin = client.get_admin();
     assert_eq!(admin, config.admin);
-    
+
     let oracle = client.get_oracle();
     assert_eq!(oracle, config.oracle);
-    
+
     let treasurer = client.get_treasurer();
     assert_eq!(treasurer, config.treasurer);
-    
+
     let withdraw_fee_ratio = client.get_withdraw_fee_ratio();
     assert_eq!(withdraw_fee_ratio, config.withdraw_fee_ratio);
-    
+
     let withdraw_fee_receiver = client.get_withdraw_fee_receiver();
     assert_eq!(withdraw_fee_receiver, config.withdraw_fee_receiver);
-    
+
     // Test EIP712 functions
     let domain_name = client.get_eip712_domain_name();
-    
+
     let domain_version = client.get_eip712_domain_version();
-    
+
     let chain_id = client.get_eip712_chain_id();
     assert!(chain_id.len() > 0);
-    
+
     let domain_separator = client.get_eip712_domain_separator();
     assert!(domain_separator.len() > 0);
 }
@@ -2018,18 +2052,18 @@ fn test_internal_functions_through_public_apis() {
 fn test_vault_error_conditions() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
-    
+
     // Test operations on uninitialized vault
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
-    
+
     // Most operations should fail on uninitialized vault
     let result = client.try_is_currency_supported(&currency);
     // Should either return false or panic depending on implementation
     let _ = result;
-    
+
     let result = client.try_get_supported_currencies();
     // Should return empty or panic
     let _ = result;
@@ -2041,16 +2075,19 @@ fn test_vault_error_conditions() {
 fn test_withdraw_request_duplicate() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _token, _oracle, _treasurer) = create_vault_with_mocks(&env);
     let user = Address::generate(&env);
     let request_hash = Bytes::from_array(&env, &[1u8; 32]);
-    
+
     // First request should succeed
     client.withdraw_request(&user, &1000, &request_hash);
-    
+
     // Second request with same parameters should fail with RequestAlreadyExists (#25)
-    #[allow(unused_must_use)] { client.withdraw_request(&user, &1000, &request_hash); }
+    #[allow(unused_must_use)]
+    {
+        client.withdraw_request(&user, &1000, &request_hash);
+    }
 }
 
 /// Test withdraw_request should fail when user shares balance is insufficient
@@ -2075,21 +2112,21 @@ fn test_withdraw_request_insufficient_balance() {
 fn test_eip712_message_creation() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Test EIP712 domain functions
     let domain_name = client.get_eip712_domain_name();
-    
+
     let domain_version = client.get_eip712_domain_version();
-    
+
     let chain_id = client.get_eip712_chain_id();
     assert!(chain_id.len() > 0);
-    
+
     let domain_separator = client.get_eip712_domain_separator();
     assert!(domain_separator.len() > 0);
-    
+
     // Multiple calls should return same values
     let domain_separator2 = client.get_eip712_domain_separator();
     assert_eq!(domain_separator, domain_separator2);
@@ -2100,18 +2137,18 @@ fn test_eip712_message_creation() {
 fn test_calculate_mint_amount_through_deposit() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
-    
+
     // Test deposit to exercise mint calculation
     let deposit_amount = 1000000i128; // 0.01 units
-    
+
     // This will test the entire deposit flow including mint calculation
     let result = client.try_deposit(&user, &currency, &deposit_amount);
-    
+
     // Deposit might fail due to missing dependencies, just ensure we can call it
     let _ = result;
 }
@@ -2121,23 +2158,26 @@ fn test_calculate_mint_amount_through_deposit() {
 fn test_vault_query_functions_comprehensive() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Test all query functions
     assert_eq!(client.get_admin(), config.admin);
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
     assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
     assert_eq!(client.get_withdraw_fee_ratio(), config.withdraw_fee_ratio);
-    assert_eq!(client.get_withdraw_fee_receiver(), config.withdraw_fee_receiver);
-    
+    assert_eq!(
+        client.get_withdraw_fee_receiver(),
+        config.withdraw_fee_receiver
+    );
+
     // Test query functions that exist
     let supported_currencies = client.get_supported_currencies();
     // Just verify the call works, don't assume specific content
     let _ = supported_currencies.len();
-    
+
     // Test currency support with a random address
     let test_currency = Address::generate(&env);
     let _ = client.is_currency_supported(&test_currency);
@@ -2154,19 +2194,19 @@ fn test_vault_query_functions_comprehensive() {
 fn test_deposit_missing_minter_manager() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
-    
+
     // Add minimal configuration to get past initial validation
     let admin = Address::generate(&env);
     let currency = Address::generate(&env);
-    
+
     // Do not set oracle to trigger Storage MissingValue when reading NAV
     client.set_treasurer_by_admin(&Address::generate(&env));
     client.set_withdraw_fee_ratio_by_admin(&100);
     client.set_withdraw_fee_recv_by_admin(&Address::generate(&env));
     client.add_currency_by_admin(&currency);
-    
+
     // Try deposit - should fail on minter manager not set
     client.deposit(&admin, &currency, &1000);
 }
@@ -2176,15 +2216,15 @@ fn test_deposit_missing_minter_manager() {
 fn test_error_conditions_comprehensive() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Test various query functions work after initialization
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
     assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
-    
+
     // Withdraw currency should be set by constructor
     let withdraw_currency = client.get_withdraw_currency();
     assert!(withdraw_currency.is_some());
@@ -2195,15 +2235,15 @@ fn test_error_conditions_comprehensive() {
 fn test_signature_verification_edge_cases() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Test verifier key management
     let new_verifier = BytesN::from_array(&env, &[4u8; 32]);
     client.set_withdraw_verifier_by_admin(&new_verifier);
     assert_eq!(client.get_withdraw_verifier(), new_verifier);
-    
+
     // Test getting withdraw verifier multiple times
     assert_eq!(client.get_withdraw_verifier(), new_verifier);
     assert_eq!(client.get_withdraw_verifier(), new_verifier);
@@ -2214,20 +2254,26 @@ fn test_signature_verification_edge_cases() {
 fn test_eip712_domain_comprehensive() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
-    
+
     // constructor domain name
-    assert_eq!(client.get_eip712_domain_name(), String::from_str(&env, "Solv Vault Withdraw"));
-    assert_eq!(client.get_eip712_domain_version(), String::from_str(&env, "1"));
-    
+    assert_eq!(
+        client.get_eip712_domain_name(),
+        String::from_str(&env, "Solv Vault Withdraw")
+    );
+    assert_eq!(
+        client.get_eip712_domain_version(),
+        String::from_str(&env, "1")
+    );
+
     // Test chain ID and domain separator
     let chain_id = client.get_eip712_chain_id();
     assert!(chain_id.len() > 0);
-    
+
     let domain_separator = client.get_eip712_domain_separator();
     assert!(domain_separator.len() > 0);
-    
+
     // Test that multiple calls return consistent results
     let chain_id2 = client.get_eip712_chain_id();
     let domain_separator2 = client.get_eip712_domain_separator();
@@ -2240,37 +2286,42 @@ fn test_eip712_domain_comprehensive() {
 fn test_system_configuration_management() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
-    
+
     // Initialize first
     let admin = Address::generate(&env);
-    
+
     // Test all system setters and getters
     let new_oracle = Address::generate(&env);
     client.set_oracle_by_admin(&new_oracle);
     assert_eq!(client.get_oracle(), new_oracle);
-    
+
     let new_treasurer = Address::generate(&env);
     client.set_treasurer_by_admin(&new_treasurer);
     assert_eq!(client.get_treasurer(), new_treasurer);
-    
-    
+
     let new_verifier = BytesN::from_array(&env, &[4u8; 32]);
     client.set_withdraw_verifier_by_admin(&new_verifier);
     assert_eq!(client.get_withdraw_verifier(), new_verifier);
-    
+
     // Test fee management
     client.set_withdraw_fee_ratio_by_admin(&200);
     assert_eq!(client.get_withdraw_fee_ratio(), 200);
-    
+
     let new_fee_receiver = Address::generate(&env);
     client.set_withdraw_fee_recv_by_admin(&new_fee_receiver);
     assert_eq!(client.get_withdraw_fee_receiver(), new_fee_receiver);
-    
+
     // Setter removed; defaults should remain
-    assert_eq!(client.get_eip712_domain_name(), String::from_str(&env, "Solv Vault Withdraw"));
-    assert_eq!(client.get_eip712_domain_version(), String::from_str(&env, "1"));
+    assert_eq!(
+        client.get_eip712_domain_name(),
+        String::from_str(&env, "Solv Vault Withdraw")
+    );
+    assert_eq!(
+        client.get_eip712_domain_version(),
+        String::from_str(&env, "1")
+    );
 }
 
 /// Test currency management comprehensive scenarios
@@ -2278,35 +2329,35 @@ fn test_system_configuration_management() {
 fn test_currency_management_comprehensive() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
-    
+
     // Test adding multiple currencies
     let currency1 = Address::generate(&env);
     let currency2 = Address::generate(&env);
     let currency3 = Address::generate(&env);
-    
+
     client.add_currency_by_admin(&currency1);
     client.add_currency_by_admin(&currency2);
     client.add_currency_by_admin(&currency3);
-    
+
     // Test getting all supported currencies
     let supported = client.get_supported_currencies();
     assert!(supported.len() >= 3);
-    
+
     // Test currency support checks
     assert!(client.is_currency_supported(&currency1));
     assert!(client.is_currency_supported(&currency2));
     assert!(client.is_currency_supported(&currency3));
     assert!(!client.is_currency_supported(&Address::generate(&env)));
-    
+
     // Test removing currencies
     client.remove_currency_by_admin(&currency2);
     assert!(!client.is_currency_supported(&currency2));
     assert!(client.is_currency_supported(&currency1));
     assert!(client.is_currency_supported(&currency3));
-    
+
     // Verify supported currencies list updated
     let supported_after = client.get_supported_currencies();
     assert!(supported_after.len() < supported.len());
@@ -2316,7 +2367,7 @@ fn test_currency_management_comprehensive() {
 fn test_set_deposit_fee_ratio_by_admin() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let admin = Address::generate(&env);
     let token_contract = Address::generate(&env);
     let oracle = Address::generate(&env);
@@ -2328,7 +2379,7 @@ fn test_set_deposit_fee_ratio_by_admin() {
     let withdraw_fee_ratio = 50i128;
     let withdraw_fee_receiver = Address::generate(&env);
     let withdraw_currency = Address::generate(&env);
-    
+
     let contract_address = env.register(
         SolvBTCVault,
         (
@@ -2344,22 +2395,22 @@ fn test_set_deposit_fee_ratio_by_admin() {
         ),
     );
     let client = SolvBTCVaultClient::new(&env, &contract_address);
-    
+
     // Check initial deposit fee ratio
     assert_eq!(client.get_deposit_fee_ratio(), initial_deposit_fee);
-    
+
     // Update deposit fee ratio to 2% (200 basis points)
     let new_deposit_fee = 200i128;
     client.set_deposit_fee_ratio_by_admin(&new_deposit_fee);
-    
+
     // Verify the update
     assert_eq!(client.get_deposit_fee_ratio(), new_deposit_fee);
-    
+
     // Test setting maximum allowed fee (100%)
     let max_fee = 10000i128;
     client.set_deposit_fee_ratio_by_admin(&max_fee);
     assert_eq!(client.get_deposit_fee_ratio(), max_fee);
-    
+
     // Test setting zero fee
     let zero_fee = 0i128;
     client.set_deposit_fee_ratio_by_admin(&zero_fee);
@@ -2371,7 +2422,7 @@ fn test_set_deposit_fee_ratio_by_admin() {
 fn test_set_deposit_fee_ratio_invalid() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let admin = Address::generate(&env);
     let token_contract = Address::generate(&env);
     let oracle = Address::generate(&env);
@@ -2383,7 +2434,7 @@ fn test_set_deposit_fee_ratio_invalid() {
     let withdraw_fee_ratio = 50i128;
     let withdraw_fee_receiver = Address::generate(&env);
     let withdraw_currency = Address::generate(&env);
-    
+
     let contract_address = env.register(
         SolvBTCVault,
         (
@@ -2399,7 +2450,7 @@ fn test_set_deposit_fee_ratio_invalid() {
         ),
     );
     let client = SolvBTCVaultClient::new(&env, &contract_address);
-    
+
     // Try to set invalid fee ratio (> 10000, which is > 100%)
     let invalid_fee = 10001i128;
     client.set_deposit_fee_ratio_by_admin(&invalid_fee);
@@ -2410,7 +2461,7 @@ fn test_set_deposit_fee_ratio_invalid() {
 fn test_set_deposit_fee_ratio_negative() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let admin = Address::generate(&env);
     let token_contract = Address::generate(&env);
     let oracle = Address::generate(&env);
@@ -2422,7 +2473,7 @@ fn test_set_deposit_fee_ratio_negative() {
     let withdraw_fee_ratio = 50i128;
     let withdraw_fee_receiver = Address::generate(&env);
     let withdraw_currency = Address::generate(&env);
-    
+
     let contract_address = env.register(
         SolvBTCVault,
         (
@@ -2438,7 +2489,7 @@ fn test_set_deposit_fee_ratio_negative() {
         ),
     );
     let client = SolvBTCVaultClient::new(&env, &contract_address);
-    
+
     // Try to set negative fee ratio
     let negative_fee = -1i128;
     client.set_deposit_fee_ratio_by_admin(&negative_fee);
@@ -2448,7 +2499,7 @@ fn test_set_deposit_fee_ratio_negative() {
 fn test_get_deposit_fee_ratio() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let admin = Address::generate(&env);
     let token_contract = Address::generate(&env);
     let oracle = Address::generate(&env);
@@ -2460,7 +2511,7 @@ fn test_get_deposit_fee_ratio() {
     let withdraw_fee_ratio = 50i128;
     let withdraw_fee_receiver = Address::generate(&env);
     let withdraw_currency = Address::generate(&env);
-    
+
     let contract_address = env.register(
         SolvBTCVault,
         (
@@ -2476,10 +2527,10 @@ fn test_get_deposit_fee_ratio() {
         ),
     );
     let client = SolvBTCVaultClient::new(&env, &contract_address);
-    
+
     // Test getting deposit fee ratio
     assert_eq!(client.get_deposit_fee_ratio(), deposit_fee_ratio);
-    
+
     // Update and verify again
     let new_fee = 500i128; // 5%
     client.set_deposit_fee_ratio_by_admin(&new_fee);
@@ -2526,7 +2577,7 @@ fn test_get_token_contract_returns_constructor_value() {
 fn test_constructor_with_negative_withdraw_fee_ratio() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let admin = Address::generate(&env);
     let token_contract = Address::generate(&env);
     let oracle = Address::generate(&env);
@@ -2536,7 +2587,7 @@ fn test_constructor_with_negative_withdraw_fee_ratio() {
     let withdraw_fee_ratio = -1i128; // Negative fee ratio should panic
     let withdraw_fee_receiver = Address::generate(&env);
     let withdraw_currency = Address::generate(&env);
-    
+
     env.register(
         SolvBTCVault,
         (
@@ -2558,7 +2609,7 @@ fn test_constructor_with_negative_withdraw_fee_ratio() {
 fn test_constructor_with_excessive_withdraw_fee_ratio() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let admin = Address::generate(&env);
     let token_contract = Address::generate(&env);
     let oracle = Address::generate(&env);
@@ -2568,7 +2619,7 @@ fn test_constructor_with_excessive_withdraw_fee_ratio() {
     let withdraw_fee_ratio = 10001i128; // Over 100% fee ratio should panic
     let withdraw_fee_receiver = Address::generate(&env);
     let withdraw_currency = Address::generate(&env);
-    
+
     env.register(
         SolvBTCVault,
         (
@@ -2589,7 +2640,7 @@ fn test_constructor_with_excessive_withdraw_fee_ratio() {
 fn test_deposit_with_zero_fee_ratio() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     // Create vault with 0 deposit fee ratio (no fee)
     let admin = Address::generate(&env);
     let token_contract = Address::generate(&env);
@@ -2600,7 +2651,7 @@ fn test_deposit_with_zero_fee_ratio() {
     let withdraw_fee_ratio = 100i128;
     let withdraw_fee_receiver = Address::generate(&env);
     let withdraw_currency = Address::generate(&env);
-    
+
     let contract_address = env.register(
         SolvBTCVault,
         (
@@ -2616,16 +2667,13 @@ fn test_deposit_with_zero_fee_ratio() {
         ),
     );
     let client = SolvBTCVaultClient::new(&env, &contract_address);
-    
+
     // Verify deposit fee ratio is 0
     assert_eq!(client.get_deposit_fee_ratio(), 0i128);
-    
+
     // Add currency
     client.add_currency_by_admin(&token_contract);
-    
+
     // Deposit should work with 0 fee (user gets full amount after fee = amount)
     // In real scenario, this would calculate shares correctly with 0 fee
 }
-
-
-

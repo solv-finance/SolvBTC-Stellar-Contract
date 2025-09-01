@@ -1,16 +1,11 @@
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-use soroban_sdk::xdr::ToXdr;
-use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env, String};
-
 // Direct contract implementation imports
 use fungible_token::FungibleTokenContract;
-use solvbtc_oracle::SolvBtcOracle;
-use solvbtc_vault::SolvBTCVault;
-
 // Import clients
 use fungible_token::FungibleTokenContractClient;
-use solvbtc_oracle::SolvBtcOracleClient;
-use solvbtc_vault::SolvBTCVaultClient;
+use solvbtc_oracle::{SolvBtcOracle, SolvBtcOracleClient};
+use solvbtc_vault::{SolvBTCVault, SolvBTCVaultClient};
+use soroban_sdk::{testutils::Address as _, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
 
 /// Contract creation helper functions
 pub fn create_fungible_token<'a>(
@@ -24,7 +19,7 @@ pub fn create_fungible_token<'a>(
     // In production, these should be different addresses
     let minter_manager = admin.clone();
     let blacklist_manager = admin.clone();
-    
+
     let contract_id = env.register(
         FungibleTokenContract,
         (
@@ -117,8 +112,10 @@ impl VaultTestEnv {
         let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
 
         // Deploy contracts (using WASM)
-        let (solvbtc_token_addr, _) = create_fungible_token(&env, &admin, "SolvBTC Token", "SolvBTC", 18);
-        let (wbtc_token_addr, _) = create_fungible_token(&env, &admin, "Wrapped Bitcoin", "WBTC", 8);
+        let (solvbtc_token_addr, _) =
+            create_fungible_token(&env, &admin, "SolvBTC Token", "SolvBTC", 18);
+        let (wbtc_token_addr, _) =
+            create_fungible_token(&env, &admin, "Wrapped Bitcoin", "WBTC", 8);
         let (oracle_addr, _) = create_oracle(&env, true);
         let (vault_addr, _) = create_vault(
             &env,
@@ -163,17 +160,20 @@ impl VaultTestEnv {
         SolvBTCVaultClient::new(&self.env, &self.vault_addr)
     }
 
-
     /// Set contract relationships
     fn setup_relationships(&self) {
         // 1.1 SolvBTC: Vault needs to be a minter to mint shares
-        self.get_solvbtc_token_client().add_minter_by_manager(&self.vault_addr);
+        self.get_solvbtc_token_client()
+            .add_minter_by_manager(&self.vault_addr);
         // 1.2 WBTC: admin mints WBTC for deposits in test
-        self.get_wbtc_token_client().add_minter_by_manager(&self.admin);
+        self.get_wbtc_token_client()
+            .add_minter_by_manager(&self.admin);
 
         // 2. Set NAV manager in Oracle
-        self.get_oracle_client().set_nav_manager_by_admin(&self.admin);
-        self.get_oracle_client().set_vault_by_admin(&self.vault_addr);
+        self.get_oracle_client()
+            .set_nav_manager_by_admin(&self.admin);
+        self.get_oracle_client()
+            .set_vault_by_admin(&self.vault_addr);
 
         // 3. Allow WBTC as supported currency for deposits
         self.get_vault_client()
@@ -185,12 +185,12 @@ impl VaultTestEnv {
         let fee_receiver = Address::generate(&self.env);
         self.get_vault_client()
             .set_withdraw_fee_recv_by_admin(&fee_receiver);
-
     }
 
     /// Mint test WBTC to user
     fn mint_wbtc_to_user(&self, amount: i128) {
-        self.get_wbtc_token_client().mint_from(&self.admin, &self.user, &amount);
+        self.get_wbtc_token_client()
+            .mint_from(&self.admin, &self.user, &amount);
     }
 
     /// User authorizes Vault to use WBTC
@@ -300,7 +300,7 @@ impl VaultTestEnv {
         // Add network ID (chain ID)
         let network_id = self.env.ledger().network_id();
         encoded.append(&network_id.into());
-        
+
         // Add action (fixed as "withdraw")
         let action_bytes = Bytes::from_slice(&self.env, b"withdraw");
         encoded.append(&action_bytes);
@@ -309,7 +309,7 @@ impl VaultTestEnv {
         encoded.append(&user_address.clone().to_xdr(&self.env));
 
         // Add target currency
-        
+
         encoded.append(&target_token.clone().to_xdr(&self.env));
 
         // Add target amount (shares)
@@ -421,13 +421,18 @@ impl VaultTestEnv {
 
     /// Mint WBTC to treasurer (for withdrawal liquidity)
     fn mint_wbtc_to_treasurer(&self, amount: i128) {
-        self.get_wbtc_token_client().mint_from(&self.admin, &self.treasurer, &amount);
+        self.get_wbtc_token_client()
+            .mint_from(&self.admin, &self.treasurer, &amount);
     }
 
     /// Treasurer authorizes vault to use WBTC
     fn approve_vault_for_treasurer_wbtc(&self, amount: i128) {
-        self.get_wbtc_token_client()
-            .approve(&self.treasurer, &self.vault_addr, &amount, &1_800_000u32);
+        self.get_wbtc_token_client().approve(
+            &self.treasurer,
+            &self.vault_addr,
+            &amount,
+            &1_800_000u32,
+        );
     }
 
     /// Treasurer deposits WBTC into vault (for withdrawal liquidity)
@@ -463,14 +468,15 @@ fn test_complete_vault_deposit_flow() {
 
     // 2. Initialize all contracts
     println!("Initializing all contracts...");
-    
 
     // 3. Set contract relationships
     println!("Setting contract relationships...");
     test_env.setup_relationships();
 
     // 4. Set higher withdrawal fee ratio to allow NAV changes
-    test_env.get_vault_client().set_withdraw_fee_ratio_by_admin(&2500i128); // 25%
+    test_env
+        .get_vault_client()
+        .set_withdraw_fee_ratio_by_admin(&2500i128); // 25%
 
     // 5. Prepare test data
     let deposit_amount = 100_000_000i128; // 1 WBTC (8 decimal places)
@@ -530,8 +536,9 @@ fn test_complete_vault_deposit_flow() {
     let currency_precision = 10_i128.pow(8);
     let deposit_fee_ratio_bps = 100i128; // 1%
     let amount_after_fee = deposit_amount - (deposit_amount * deposit_fee_ratio_bps) / 10000;
-    let expected_minted = (amount_after_fee * shares_precision * nav_precision) / (nav_value * currency_precision);
-    
+    let expected_minted =
+        (amount_after_fee * shares_precision * nav_precision) / (nav_value * currency_precision);
+
     assert_eq!(minted_tokens, expected_minted);
 
     println!("Vault deposit integration test completed successfully!");
@@ -549,7 +556,7 @@ fn test_complete_vault_deposit_flow() {
 #[test]
 fn test_vault_query_functions() {
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     let vault_client = test_env.get_vault_client();
@@ -574,16 +581,16 @@ fn test_vault_query_functions() {
 #[test]
 fn test_different_nav_values() {
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     let deposit_amount = 50_000_000i128; // 0.5 WBTC
 
     // Test different NAV values (small changes within 1% fee limit)
     let test_cases = vec![
-        (100_000_000i128, "1.0"),    // NAV = 1.0 (baseline)
-        (100_500_000i128, "1.005"),  // NAV = 1.005 (0.5% increase)
-        (100_800_000i128, "1.008"),  // NAV = 1.008 (0.8% increase)
+        (100_000_000i128, "1.0"),   // NAV = 1.0 (baseline)
+        (100_500_000i128, "1.005"), // NAV = 1.005 (0.5% increase)
+        (100_800_000i128, "1.008"), // NAV = 1.008 (0.8% increase)
     ];
 
     for (nav_value, nav_desc) in test_cases {
@@ -604,8 +611,9 @@ fn test_different_nav_values() {
         let nav_precision = 10_i128.pow(8);
         let currency_precision = 10_i128.pow(8);
         let amount_after_fee = deposit_amount - (deposit_amount * 100) / 10000;
-        let expected_minted = (amount_after_fee * shares_precision * nav_precision) / (nav_value * currency_precision);
-        
+        let expected_minted = (amount_after_fee * shares_precision * nav_precision)
+            / (nav_value * currency_precision);
+
         assert_eq!(minted_tokens, expected_minted);
 
         println!(
@@ -626,7 +634,6 @@ fn test_complete_vault_withdraw_flow() {
 
     // 2. Initialize all contracts
     println!("Initializing all contracts...");
-    
 
     // 3. Set contract relationships
     println!("Setting contract relationships...");
@@ -772,7 +779,7 @@ fn test_withdraw_error_scenarios() {
     println!("Starting Vault withdraw error scenario test");
 
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     let vault_client = test_env.get_vault_client();
@@ -832,7 +839,7 @@ fn test_withdraw_signature_validation_structure() {
     println!("Starting Vault withdraw signature validation structure test");
 
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     // 1. Prepare test data
@@ -945,7 +952,7 @@ fn test_withdraw_with_invalid_signature_should_panic() {
     println!("Starting test invalid signature should cause panic");
 
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     // Prepare test data - first deposit
@@ -971,12 +978,7 @@ fn test_withdraw_with_invalid_signature_should_panic() {
     println!("Execute withdrawal operation, expect panic due to signature validation failure...");
 
     // This call should panic (because we deliberately used an incorrect signature)
-    test_env.withdraw(
-        target_amount,
-        nav_value,
-        request_hash,
-        invalid_signature,
-    );
+    test_env.withdraw(target_amount, nav_value, request_hash, invalid_signature);
 }
 
 #[test]
@@ -984,7 +986,7 @@ fn test_withdraw_with_real_signature_success() {
     println!("Starting test using real signature successful withdrawal process");
 
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     // Print verifier address and public key information
@@ -1129,7 +1131,7 @@ fn test_deposit_operation_comprehensive() {
     println!("Starting comprehensive deposit operation test");
 
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     // Set withdraw fee receiver (deposit functionality requires this configuration)
@@ -1139,7 +1141,9 @@ fn test_deposit_operation_comprehensive() {
         .set_withdraw_fee_recv_by_admin(&fee_receiver);
 
     // Set higher withdrawal fee ratio to allow NAV changes
-    test_env.get_vault_client().set_withdraw_fee_ratio_by_admin(&2500i128); // 25%
+    test_env
+        .get_vault_client()
+        .set_withdraw_fee_ratio_by_admin(&2500i128); // 25%
 
     // Test various deposit scenarios (NAV can only increase, not decrease)
     let test_cases = vec![
@@ -1204,8 +1208,9 @@ fn test_deposit_operation_comprehensive() {
         let nav_precision = 10_i128.pow(8);
         let currency_precision = 10_i128.pow(8);
         let amount_after_fee = deposit_amount - (deposit_amount * 100) / 10000;
-        let expected_minted = (amount_after_fee * shares_precision * nav_precision) / (nav_value * currency_precision);
-        
+        let expected_minted = (amount_after_fee * shares_precision * nav_precision)
+            / (nav_value * currency_precision);
+
         assert_eq!(
             minted_tokens, expected_minted,
             "Minted amount should be calculated correctly based on NAV"
@@ -1229,7 +1234,7 @@ fn test_treasurer_deposit_operation() {
     println!("Starting treasurer deposit operation test");
 
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     // Test treasurer deposit operations
@@ -1256,7 +1261,10 @@ fn test_treasurer_deposit_operation() {
         let before_treasurer_wbtc = test_env.get_treasurer_wbtc_balance();
         let _vault_client = test_env.get_vault_client();
 
-        println!("Pre-deposit treasurer WBTC balance: {}", before_treasurer_wbtc);
+        println!(
+            "Pre-deposit treasurer WBTC balance: {}",
+            before_treasurer_wbtc
+        );
 
         // Execute treasurer deposit operation
         test_env.treasurer_deposit_wbtc(*deposit_amount);
@@ -1264,7 +1272,10 @@ fn test_treasurer_deposit_operation() {
         // Record post-deposit state
         let after_treasurer_wbtc = test_env.get_treasurer_wbtc_balance();
 
-        println!("Post-deposit treasurer WBTC balance: {}", after_treasurer_wbtc);
+        println!(
+            "Post-deposit treasurer WBTC balance: {}",
+            after_treasurer_wbtc
+        );
 
         // Verify treasurer deposit results
         assert_eq!(
@@ -1281,7 +1292,10 @@ fn test_treasurer_deposit_operation() {
 
     println!("Treasurer deposit operation test completed!");
     println!("Summary:");
-    println!("  ✓ Tested {} treasurer deposit operations", test_amounts.len());
+    println!(
+        "  ✓ Tested {} treasurer deposit operations",
+        test_amounts.len()
+    );
     println!("  ✓ Total deposited: {} WBTC", total_deposited);
     println!("  ✓ All deposit operations executed successfully");
 }
@@ -1291,7 +1305,7 @@ fn test_withdraw_request_operation() {
     println!("Starting withdraw request operation test");
 
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     // Set withdraw fee receiver
@@ -1332,7 +1346,10 @@ fn test_withdraw_request_operation() {
         // Record pre-withdrawal request state
         let before_user_solvbtc = test_env.get_user_solvbtc_balance();
 
-        println!("User SolvBTC balance before withdrawal request: {}", before_user_solvbtc);
+        println!(
+            "User SolvBTC balance before withdrawal request: {}",
+            before_user_solvbtc
+        );
         println!("Request withdrawal shares: {}", shares_amount);
         println!("Request hash length: {} bytes", request_hash.len());
 
@@ -1362,7 +1379,10 @@ fn test_withdraw_request_operation() {
 
     println!("Withdrawal request operation test completed!");
     println!("Summary:");
-    println!("  ✓ Successfully created {} withdrawal requests", request_count);
+    println!(
+        "  ✓ Successfully created {} withdrawal requests",
+        request_count
+    );
     println!("  ✓ All request hashes format correctly (32 bytes)");
     println!("  ✓ Withdrawal request operations execute normally");
     println!("  ✓ Contract state management correct");
@@ -1373,7 +1393,7 @@ fn test_complete_withdraw_operation_flow() {
     println!("Starting complete withdraw operation flow test");
 
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     // Set withdraw fee receiver
@@ -1405,7 +1425,10 @@ fn test_complete_withdraw_operation_flow() {
     test_env.approve_vault_for_treasurer_wbtc(liquidity_amount);
     test_env.treasurer_deposit_wbtc(liquidity_amount);
 
-    println!("Treasurer deposited {} WBTC as withdrawal liquidity", liquidity_amount);
+    println!(
+        "Treasurer deposited {} WBTC as withdrawal liquidity",
+        liquidity_amount
+    );
 
     // Step 3: Create withdrawal request
     println!("=== Step 3: Create withdrawal request ===");
@@ -1474,7 +1497,10 @@ fn test_complete_withdraw_operation_flow() {
     println!("EIP712 configuration verification:");
     println!("  Domain name: {}", domain_name.to_string());
     println!("  Domain version: {}", domain_version.to_string());
-    println!("  Domain separator length: {} bytes", domain_separator.len());
+    println!(
+        "  Domain separator length: {} bytes",
+        domain_separator.len()
+    );
 
     // Step 7: Verify withdrawal configuration
     println!("=== Step 7: Verify withdrawal configuration ===");
@@ -1484,7 +1510,10 @@ fn test_complete_withdraw_operation_flow() {
 
     println!("Withdrawal configuration verification:");
     println!("  Verifier address: {:?}", withdraw_verifier);
-    println!("  Withdrawal fee rate: {}%", withdraw_fee_ratio as f64 / 100.0);
+    println!(
+        "  Withdrawal fee rate: {}%",
+        withdraw_fee_ratio as f64 / 100.0
+    );
     println!("  Fee receiver: {:?}", withdraw_fee_receiver);
 
     // Verify configuration completeness
@@ -1492,7 +1521,10 @@ fn test_complete_withdraw_operation_flow() {
         withdraw_currency, test_env.wbtc_token_addr,
         "Withdrawal currency should be WBTC"
     );
-    assert!(withdraw_fee_ratio > 0, "Withdrawal fee rate should be greater than 0");
+    assert!(
+        withdraw_fee_ratio > 0,
+        "Withdrawal fee rate should be greater than 0"
+    );
 
     println!("Complete withdrawal operation flow test completed!");
     println!("Test summary:");
@@ -1514,7 +1546,7 @@ fn test_all_four_operations_integration() {
     println!("Starting all four operations integration test");
 
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     // Set withdraw fee receiver
@@ -1524,7 +1556,9 @@ fn test_all_four_operations_integration() {
         .set_withdraw_fee_recv_by_admin(&fee_receiver);
 
     // Set higher withdrawal fee ratio to allow NAV changes
-    test_env.get_vault_client().set_withdraw_fee_ratio_by_admin(&2500i128); // 25%
+    test_env
+        .get_vault_client()
+        .set_withdraw_fee_ratio_by_admin(&2500i128); // 25%
 
     println!("=== Integration test: All four operation functions ===");
 
@@ -1551,7 +1585,10 @@ fn test_all_four_operations_integration() {
     test_env.approve_vault_for_treasurer_wbtc(treasury_liquidity);
     test_env.treasurer_deposit_wbtc(treasury_liquidity);
 
-    println!("   ✓ Treasurer deposit successful: {} WBTC liquidity", treasury_liquidity);
+    println!(
+        "   ✓ Treasurer deposit successful: {} WBTC liquidity",
+        treasury_liquidity
+    );
 
     // Operation 3: Withdrawal request (withdraw_request)
     println!("3. Testing withdrawal request operation (withdraw_request)");
@@ -1564,7 +1601,10 @@ fn test_all_four_operations_integration() {
     let vault_client = test_env.get_vault_client();
     vault_client.withdraw_request(&test_env.user, &withdraw_shares, &request_hash);
 
-    println!("   ✓ Withdrawal request successful: {} SolvBTC shares", withdraw_shares);
+    println!(
+        "   ✓ Withdrawal request successful: {} SolvBTC shares",
+        withdraw_shares
+    );
 
     // Operation 4: Withdrawal operation preparation (withdraw preparation)
     println!("4. Testing withdrawal operation preparation (withdraw preparation)");
@@ -1579,7 +1619,10 @@ fn test_all_four_operations_integration() {
         &request_hash,
     );
 
-    println!("   ✓ Withdrawal signature generation successful: {} bytes signature", signature.len());
+    println!(
+        "   ✓ Withdrawal signature generation successful: {} bytes signature",
+        signature.len()
+    );
 
     // Verify final state of all operations
     println!("=== Final state verification ===");
@@ -1594,11 +1637,20 @@ fn test_all_four_operations_integration() {
     println!("  Treasurer WBTC balance: {}", final_treasurer_wbtc);
 
     // Verify correctness of operation chain
-    assert_eq!(final_user_wbtc, 0, "User WBTC should be transferred away by deposit");
+    assert_eq!(
+        final_user_wbtc, 0,
+        "User WBTC should be transferred away by deposit"
+    );
     // User balance should be minted tokens minus withdrawal request tokens
     let expected_user_solvbtc = minted_tokens - withdraw_shares;
-    assert_eq!(final_user_solvbtc, expected_user_solvbtc, "User should have correct SolvBTC balance");
-    assert!(final_treasurer_wbtc > 0, "Treasurer should have WBTC liquidity");
+    assert_eq!(
+        final_user_solvbtc, expected_user_solvbtc,
+        "User should have correct SolvBTC balance"
+    );
+    assert!(
+        final_treasurer_wbtc > 0,
+        "Treasurer should have WBTC liquidity"
+    );
 
     // Verify contract configuration completeness
     let is_currency_supported = vault_client.is_currency_supported(&test_env.wbtc_token_addr);
@@ -1629,7 +1681,7 @@ fn test_simplified_deposit_without_nav() {
     println!("Starting simplified deposit test without NAV setting");
 
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     // Set withdraw fee receiver (deposit functionality requires this configuration)
@@ -1678,19 +1730,26 @@ fn test_simplified_deposit_without_nav() {
 
     // Verify WBTC transfer
     assert_eq!(after_user_wbtc, 0, "User's WBTC should be transferred away");
-    assert_eq!(after_treasurer_wbtc, deposit_amount, "Treasurer should receive WBTC");
+    assert_eq!(
+        after_treasurer_wbtc, deposit_amount,
+        "Treasurer should receive WBTC"
+    );
 
     // Verify SolvBTC minting
-    assert_eq!(after_user_solvbtc, minted_tokens, "User should receive minted tokens");
+    assert_eq!(
+        after_user_solvbtc, minted_tokens,
+        "User should receive minted tokens"
+    );
 
     // Verify minting quantity calculation with 1% deposit fee (using default NAV = 1.0)
     let initial_nav = 100_000_000i128; // Default initial NAV
-    // shares = amount * 10^shares_decimals * 10^nav_decimals / (nav * 10^currency_decimals)
+                                       // shares = amount * 10^shares_decimals * 10^nav_decimals / (nav * 10^currency_decimals)
     let shares_precision = 10_i128.pow(18);
     let nav_precision = 10_i128.pow(8);
     let currency_precision = 10_i128.pow(8);
     let amount_after_fee = deposit_amount - (deposit_amount * 100) / 10000;
-    let expected_minted = (amount_after_fee * shares_precision * nav_precision) / (initial_nav * currency_precision);
+    let expected_minted =
+        (amount_after_fee * shares_precision * nav_precision) / (initial_nav * currency_precision);
     assert_eq!(
         minted_tokens, expected_minted,
         "Minting amount should be calculated correctly based on default NAV"
@@ -1702,7 +1761,10 @@ fn test_simplified_deposit_without_nav() {
     println!("   Using default NAV: {} (representing 1.0)", initial_nav);
     println!("   Expected minting: {} SolvBTC", expected_minted);
     println!("   Actual minting: {} SolvBTC", minted_tokens);
-    println!("   Calculation correct: {}", minted_tokens == expected_minted);
+    println!(
+        "   Calculation correct: {}",
+        minted_tokens == expected_minted
+    );
 }
 
 #[test]
@@ -1710,7 +1772,7 @@ fn test_simplified_treasurer_deposit() {
     println!("Starting simplified treasurer deposit test");
 
     let test_env = VaultTestEnv::new();
-    
+
     test_env.setup_relationships();
 
     // Test treasurer deposit operation
@@ -1723,7 +1785,10 @@ fn test_simplified_treasurer_deposit() {
     // Record pre-deposit state
     let before_treasurer_wbtc = test_env.get_treasurer_wbtc_balance();
 
-    println!("Pre-deposit treasurer WBTC balance: {}", before_treasurer_wbtc);
+    println!(
+        "Pre-deposit treasurer WBTC balance: {}",
+        before_treasurer_wbtc
+    );
     assert_eq!(before_treasurer_wbtc, deposit_amount);
 
     // Execute treasurer deposit operation
@@ -1732,10 +1797,16 @@ fn test_simplified_treasurer_deposit() {
     // Record post-deposit state
     let after_treasurer_wbtc = test_env.get_treasurer_wbtc_balance();
 
-    println!("Post-deposit treasurer WBTC balance: {}", after_treasurer_wbtc);
+    println!(
+        "Post-deposit treasurer WBTC balance: {}",
+        after_treasurer_wbtc
+    );
 
     // Verify treasurer deposit results
-    assert_eq!(after_treasurer_wbtc, 0, "Treasurer WBTC balance should be transferred to contract");
+    assert_eq!(
+        after_treasurer_wbtc, 0,
+        "Treasurer WBTC balance should be transferred to contract"
+    );
 
     println!("✓ Treasurer deposit {} WBTC successful", deposit_amount);
     println!("Simplified treasurer deposit test completed!");
@@ -1785,14 +1856,20 @@ fn test_vault_initialization_with_config() {
     assert_eq!(vault_client.get_treasurer(), treasurer);
     assert_eq!(vault_client.get_withdraw_verifier(), withdraw_verifier);
     assert_eq!(vault_client.get_withdraw_fee_ratio(), 150);
-    assert_eq!(vault_client.get_eip712_domain_name(), String::from_str(&env, "Solv Vault Withdraw"));
-    assert_eq!(vault_client.get_eip712_domain_version(), String::from_str(&env, "1"));
+    assert_eq!(
+        vault_client.get_eip712_domain_name(),
+        String::from_str(&env, "Solv Vault Withdraw")
+    );
+    assert_eq!(
+        vault_client.get_eip712_domain_version(),
+        String::from_str(&env, "1")
+    );
 
     println!("✓ Vault configuration-based initialization successful!");
-    
+
     // Compare with traditional method
     println!("Comparing with traditional initialization method...");
-    
+
     // Deploy another vault for comparison via constructor
     let (vault_addr2, _) = create_vault(
         &env,
@@ -1808,14 +1885,20 @@ fn test_vault_initialization_with_config() {
     );
     let vault_client2 = SolvBTCVaultClient::new(&env, &vault_addr2);
     // domain setter removed; keep defaults
-    
+
     // Traditional initialization removed; both are constructor-based
-    
+
     // Both should have identical results
     assert_eq!(vault_client.get_admin(), vault_client2.get_admin());
-    assert_eq!(vault_client.get_withdraw_fee_ratio(), vault_client2.get_withdraw_fee_ratio());
-    assert_eq!(vault_client.get_eip712_domain_name(), vault_client2.get_eip712_domain_name());
-    
+    assert_eq!(
+        vault_client.get_withdraw_fee_ratio(),
+        vault_client2.get_withdraw_fee_ratio()
+    );
+    assert_eq!(
+        vault_client.get_eip712_domain_name(),
+        vault_client2.get_eip712_domain_name()
+    );
+
     println!("✓ Both initialization methods produce identical results!");
     println!("Configuration-based initialization test completed successfully!");
 }

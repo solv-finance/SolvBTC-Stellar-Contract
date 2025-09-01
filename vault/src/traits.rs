@@ -101,7 +101,6 @@ pub trait SystemManagement {
 
     /// Set withdraw fee receiver by admin
     fn set_withdraw_fee_recv_by_admin(env: Env, withdraw_fee_receiver: Address);
-
 }
 
 // ==================== Query Functions ====================
@@ -129,7 +128,6 @@ pub trait VaultQuery {
     /// Get withdrawal fee receiver
     fn get_withdraw_fee_receiver(env: Env) -> Address;
 
-
     /// Get EIP712 domain name
     fn get_eip712_domain_name(env: Env) -> String;
 
@@ -142,7 +140,6 @@ pub trait VaultQuery {
     /// Get EIP712 domain separator
     fn get_eip712_domain_separator(env: Env) -> Bytes;
 }
-
 
 // ==================== Event Definitions ====================
 
@@ -177,7 +174,6 @@ pub struct SetAllowedCurrencyEvent {
 pub struct CurrencyRemovedEvent {
     pub admin: Address,
 }
-
 
 /// Withdraw request event
 #[contracttype]

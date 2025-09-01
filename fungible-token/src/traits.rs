@@ -1,12 +1,12 @@
 use soroban_sdk::{Address, Env, Vec};
 
-// 1. Mintable functionality trait 
+// 1. Mintable functionality trait
 pub trait MintableToken {
     /// Mint tokens (minter role only)
     fn mint_from(env: Env, from: Address, to: Address, amount: i128);
 }
 
-// 2. Blacklist functionality trait 
+// 2. Blacklist functionality trait
 pub trait BlacklistTrait {
     /// Add address to blacklist (blacklist manager role only)
     fn add_to_blacklist(env: Env, from: Address, address: Address);
