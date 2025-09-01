@@ -2487,6 +2487,42 @@ fn test_get_deposit_fee_ratio() {
 }
 
 #[test]
+fn test_get_token_contract_returns_constructor_value() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // 手工构造并注册：我们需要拿到构造器传入的 token_contract 地址
+    let admin = Address::generate(&env);
+    let token_contract = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
+    let deposit_fee_ratio = 100i128;
+    let withdraw_fee_ratio = 100i128;
+    let withdraw_fee_receiver = Address::generate(&env);
+    let withdraw_currency = Address::generate(&env);
+
+    let contract_address = env.register(
+        SolvBTCVault,
+        (
+            admin.clone(),
+            token_contract.clone(),
+            oracle.clone(),
+            treasurer.clone(),
+            withdraw_verifier.clone(),
+            deposit_fee_ratio,
+            withdraw_fee_ratio,
+            withdraw_fee_receiver.clone(),
+            withdraw_currency.clone(),
+        ),
+    );
+    let client = SolvBTCVaultClient::new(&env, &contract_address);
+
+    // 断言 getter 返回与构造器一致的 token 合约地址
+    assert_eq!(client.get_token_contract(), token_contract);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #308)")] // InvalidWithdrawFeeRatio in constructor
 fn test_constructor_with_negative_withdraw_fee_ratio() {
     let env = Env::default();

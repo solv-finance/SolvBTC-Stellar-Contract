@@ -138,6 +138,9 @@ pub trait VaultQuery {
 
     /// Get EIP712 domain separator
     fn get_eip712_domain_separator(env: Env) -> Bytes;
+
+    /// Get shares (minted) token contract address
+    fn get_token_contract(env: Env) -> Address;
 }
 
 

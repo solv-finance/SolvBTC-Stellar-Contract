@@ -720,6 +720,10 @@ impl VaultQuery for SolvBTCVault {
     fn get_withdraw_fee_receiver(env: Env) -> Address {
         Self::get_withdraw_fee_receiver_internal(&env)
     }
+
+    fn get_token_contract(env: Env) -> Address {
+        Self::get_token_contract_internal(&env)
+    }
 }
 
 // ==================== Internal helper functions ====================
