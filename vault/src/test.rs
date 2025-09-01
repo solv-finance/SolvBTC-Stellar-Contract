@@ -2491,7 +2491,7 @@ fn test_get_token_contract_returns_constructor_value() {
     let env = Env::default();
     env.mock_all_auths();
 
-    // 手工构造并注册：我们需要拿到构造器传入的 token_contract 地址
+    // Manually construct and register: we need to get the token_contract address passed to the constructor
     let admin = Address::generate(&env);
     let token_contract = Address::generate(&env);
     let oracle = Address::generate(&env);
@@ -2518,8 +2518,7 @@ fn test_get_token_contract_returns_constructor_value() {
     );
     let client = SolvBTCVaultClient::new(&env, &contract_address);
 
-    // 断言 getter 返回与构造器一致的 token 合约地址
-    assert_eq!(client.get_token_contract(), token_contract);
+    assert_eq!(client.get_shares_token(), token_contract);
 }
 
 #[test]

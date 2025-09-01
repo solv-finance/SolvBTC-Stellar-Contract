@@ -75,6 +75,9 @@ pub trait CurrencyManagement {
 
     /// Set withdraw currency by admin
     fn set_withdraw_currency_by_admin(env: Env, withdraw_currency: Address);
+
+    /// Get shares (minted) token contract address
+    fn get_shares_token(env: Env) -> Address;
 }
 
 // ==================== System Management Functions ====================
@@ -138,9 +141,6 @@ pub trait VaultQuery {
 
     /// Get EIP712 domain separator
     fn get_eip712_domain_separator(env: Env) -> Bytes;
-
-    /// Get shares (minted) token contract address
-    fn get_token_contract(env: Env) -> Address;
 }
 
 

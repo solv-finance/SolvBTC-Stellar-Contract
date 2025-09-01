@@ -560,6 +560,10 @@ impl CurrencyManagement for SolvBTCVault {
             Self::get_admin_internal(&env)
         );
     }
+
+    fn get_shares_token(env: Env) -> Address {
+        Self::get_token_contract_internal(&env)
+    }
 }
 
 // ==================== System management function implementation ====================
@@ -719,10 +723,6 @@ impl VaultQuery for SolvBTCVault {
 
     fn get_withdraw_fee_receiver(env: Env) -> Address {
         Self::get_withdraw_fee_receiver_internal(&env)
-    }
-
-    fn get_token_contract(env: Env) -> Address {
-        Self::get_token_contract_internal(&env)
     }
 }
 
