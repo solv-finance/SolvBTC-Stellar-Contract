@@ -6,6 +6,8 @@ use soroban_sdk::{
 
 use stellar_ownable::{self as ownable, Ownable};
 use stellar_ownable_macro::only_owner;
+use stellar_upgradeable::UpgradeableInternal;
+use stellar_upgradeable_macros::Upgradeable;
 use stellar_default_impl_macro::default_impl;
 
 // Import dependencies
@@ -90,16 +92,14 @@ pub enum VaultError {
     WithdrawFeeRatioNotSet = 307,
     /// Invalid withdraw fee ratio
     InvalidWithdrawFeeRatio = 308,
-    /// Invalid signature format
-    InvalidSignatureFormat = 309,
     /// Request already exists
-    RequestAlreadyExists = 310,
+    RequestAlreadyExists = 309,
     /// Insufficient balance
-    InsufficientBalance = 311,
+    InsufficientBalance = 310,
     /// Invalid request status
-    InvalidRequestStatus = 312,
+    InvalidRequestStatus = 311,
     /// Invalid deposit fee ratio
-    InvalidDepositFeeRatio = 313,
+    InvalidDepositFeeRatio = 312,
    
 }
 
@@ -112,6 +112,7 @@ pub enum WithdrawStatus {
 }
 
 /// SolvBTC Vault contract
+#[derive(Upgradeable)]
 #[contract]
 pub struct SolvBTCVault;
 
@@ -119,12 +120,6 @@ pub struct SolvBTCVault;
 
 #[contractimpl]
 impl SolvBTCVault {
-    /// Upgrade the contract with a new WASM hash
-    #[only_owner]
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
-    }
-
     pub fn __constructor(
         env: &Env,
         admin: Address,
@@ -428,6 +423,7 @@ impl VaultOperations for SolvBTCVault {
             WithdrawEvent {
                 amount: amount_after_fee,
                 fee,
+                request_hash,
             },
         );
 
@@ -963,11 +959,6 @@ impl SolvBTCVault {
         request_hash: &Bytes,
         signature: &BytesN<64>,
     ) {
-        // Check signature length
-        if signature.len() != 64 {
-            panic_with_error!(env, VaultError::InvalidSignatureFormat);
-        }
-
         // Get verifier public key
         let verifier_public_key = Self::get_verifier_public_key(env);
 
@@ -1109,3 +1100,14 @@ impl SolvBTCVault {
 #[default_impl]
 #[contractimpl]
 impl Ownable for SolvBTCVault {}
+
+// Provide upgrade auth via OpenZeppelin UpgradeableInternal
+impl UpgradeableInternal for SolvBTCVault {
+    fn _require_auth(e: &Env, operator: &Address) {
+        operator.require_auth();
+        let owner = ownable::get_owner(e).unwrap();
+        if *operator != owner {
+            panic_with_error!(e, VaultError::InvalidRequestStatus); // reuse error space; or define a dedicated Unauthorized
+        }
+    }
+}

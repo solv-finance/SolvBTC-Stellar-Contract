@@ -563,6 +563,8 @@ dependencies = [
  "stellar-ownable-macro",
  "stellar-pausable",
  "stellar-pausable-macros",
+ "stellar-upgradeable",
+ "stellar-upgradeable-macros",
 ]
 
 [[package]]
@@ -1162,6 +1164,8 @@ dependencies = [
  "stellar-default-impl-macro",
  "stellar-ownable",
  "stellar-ownable-macro",
+ "stellar-upgradeable",
+ "stellar-upgradeable-macros",
 ]
 
 [[package]]
@@ -1178,6 +1182,8 @@ dependencies = [
  "stellar-ownable",
  "stellar-ownable-macro",
  "stellar-strkey 0.0.7",
+ "stellar-upgradeable",
+ "stellar-upgradeable-macros",
 ]
 
 [[package]]
@@ -1501,6 +1507,24 @@ dependencies = [
  "crate-git-revision",
  "data-encoding",
  "thiserror",
+]
+
+[[package]]
+name = "stellar-upgradeable"
+version = "0.3.0"
+source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.3.0#659fcabdc0e4712254dfebe4f45efd54f49826e9"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
+name = "stellar-upgradeable-macros"
+version = "0.3.0"
+source = "git+https://github.com/OpenZeppelin/stellar-contracts?tag=v0.3.0#659fcabdc0e4712254dfebe4f45efd54f49826e9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
 ]
 
 [[package]]

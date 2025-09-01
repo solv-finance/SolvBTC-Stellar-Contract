@@ -10,6 +10,8 @@ use stellar_pausable_macros::when_not_paused;
 use stellar_ownable::{self as ownable, Ownable};
 use stellar_ownable_macro::only_owner;
 use stellar_default_impl_macro::default_impl;
+use stellar_upgradeable::UpgradeableInternal;
+use stellar_upgradeable_macros::Upgradeable;
 
 
 // Import our defined traits  
@@ -62,6 +64,7 @@ pub enum TokenError {
 }
 
 // FungibleToken contract
+#[derive(Upgradeable)]
 #[contract]
 pub struct FungibleTokenContract;
 
@@ -69,12 +72,6 @@ pub struct FungibleTokenContract;
 
 #[contractimpl]
 impl FungibleTokenContract {
-    /// Upgrade contract with new WASM hash
-    #[only_owner]
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
-    }
-    
     pub fn __constructor(
         env: &Env,
         admin: Address,
@@ -423,6 +420,16 @@ impl FungibleTokenContract {
 #[default_impl]
 #[contractimpl]
 impl Ownable for FungibleTokenContract {}
+
+impl UpgradeableInternal for FungibleTokenContract {
+    fn _require_auth(e: &Env, operator: &Address) {
+        operator.require_auth();
+        let owner = ownable::get_owner(e).unwrap();
+        if *operator != owner {
+            panic_with_error!(e, TokenError::Unauthorized);
+        }
+    }
+}
 
 // ==================== Private Helper Functions ====================
 

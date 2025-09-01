@@ -5,6 +5,8 @@ use soroban_sdk::{
 
 use stellar_ownable::{self as ownable, Ownable};
 use stellar_ownable_macro::only_owner;
+use stellar_upgradeable::UpgradeableInternal;
+use stellar_upgradeable_macros::Upgradeable;
 use stellar_default_impl_macro::default_impl;
 
 pub use crate::traits::{
@@ -50,6 +52,7 @@ pub enum DataKey {
 
 // ==================== Contract Definition ====================
 
+#[derive(Upgradeable)]
 #[contract]
 pub struct SolvBtcOracle;
 
@@ -57,12 +60,6 @@ pub struct SolvBtcOracle;
 
 #[contractimpl]
 impl SolvBtcOracle {
-    /// Upgrade contract with new WASM hash
-    #[only_owner]
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
-    }
-    
     pub fn __constructor(env: &Env, admin: Address, nav_decimals: u32, initial_nav: i128) {
         // Validate parameters
         if initial_nav <= 0 {
@@ -216,3 +213,13 @@ impl SolvBtcOracle {
 #[default_impl]
 #[contractimpl]
 impl Ownable for SolvBtcOracle {}
+
+impl UpgradeableInternal for SolvBtcOracle {
+    fn _require_auth(e: &Env, operator: &Address) {
+        operator.require_auth();
+        let owner = ownable::get_owner(e).unwrap();
+        if *operator != owner {
+            panic_with_error!(e, OracleError::InvalidArgument); // reuse existing error space
+        }
+    }
+}

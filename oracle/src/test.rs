@@ -585,15 +585,15 @@ fn test_oracle_upgrade_success() {
     // Allow owner auth to pass
     env.mock_all_auths();
 
-    let (client, _, _) = create_oracle_contract(&env);
+    let (client, _, admin) = create_oracle_contract(&env);
 
     // Upload new wasm and get its hash
     let wasm_hash = env
         .deployer()
         .upload_contract_wasm(Bytes::from_slice(&env, ORACLE_WASM_BYTES));
 
-    // Call upgrade
-    client.upgrade(&wasm_hash);
+    // Call upgrade with admin as operator
+    client.upgrade(&wasm_hash, &admin);
 
     // Post-upgrade: contract should still function
     assert_eq!(client.get_nav_decimals(), 8);
@@ -604,25 +604,27 @@ fn test_oracle_upgrade_success() {
 fn test_oracle_upgrade_with_unuploaded_hash_should_panic() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, _addr, _admin) = create_oracle_contract(&env);
+    let (client, _addr, admin) = create_oracle_contract(&env);
 
     // Random hash that was never uploaded
     let fake = BytesN::from_array(&env, &[7u8; 32]);
-    client.upgrade(&fake);
+    client.upgrade(&fake, &admin);
 }
 
 #[test]
 #[should_panic]
 fn test_oracle_upgrade_requires_owner_should_panic() {
     let env = Env::default();
-    let (client, _addr, _admin) = create_oracle_contract(&env);
+    let (client, _addr, admin) = create_oracle_contract(&env);
 
     let wasm_hash = env
         .deployer()
         .upload_contract_wasm(Bytes::from_slice(&env, ORACLE_WASM_BYTES));
 
     // No auth mocked → only_owner should fail
-    client.upgrade(&wasm_hash);
+    // Using a different address (not the admin) as operator
+    let non_admin = Address::generate(&env);
+    client.upgrade(&wasm_hash, &non_admin);
 }
 
 /// Test initialization event emission

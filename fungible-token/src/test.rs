@@ -1042,7 +1042,7 @@ fn test_ft_upgrade_success() {
         .deployer()
         .upload_contract_wasm(Bytes::from_slice(&env, FT_WASM_BYTES));
 
-    client.upgrade(&wasm_hash);
+    client.upgrade(&wasm_hash, &owner);
 
     // Verify still functional
     assert_eq!(client.decimals(), 7);
@@ -1057,7 +1057,7 @@ fn test_ft_upgrade_with_unuploaded_hash_should_panic() {
     let client = create_and_init_token(&env, &owner, "UPG", "UPG", 7);
 
     let fake = BytesN::from_array(&env, &[3u8; 32]);
-    client.upgrade(&fake);
+    client.upgrade(&fake, &owner);
 }
 
 #[test]
@@ -1072,7 +1072,9 @@ fn test_ft_upgrade_requires_owner_should_panic() {
         .upload_contract_wasm(Bytes::from_slice(&env, FT_WASM_BYTES));
 
     // No auth mocked → only_owner should fail
-    client.upgrade(&wasm_hash);
+    // Using a different address (not the owner) as operator
+    let non_owner = Address::generate(&env);
+    client.upgrade(&wasm_hash, &non_owner);
 }
 
 #[test]

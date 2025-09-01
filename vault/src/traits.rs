@@ -155,6 +155,7 @@ pub struct DepositEvent {
 pub struct WithdrawEvent {
     pub amount: i128,
     pub fee: i128,
+    pub request_hash: Bytes,
 }
 
 /// Currency added event

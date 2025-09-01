@@ -10,7 +10,7 @@ use soroban_sdk::{
 use soroban_sdk::xdr::ToXdr;
 
 // Helper functions for creating contract and client
-fn create_vault_contract(env: &Env) -> (SolvBTCVaultClient, Address) {
+fn create_vault_contract(env: &Env) -> (SolvBTCVaultClient, Address, Address) {
     // Use constructor to complete initialization
     let admin = Address::generate(env);
     let token_contract = Address::generate(env);
@@ -28,7 +28,7 @@ fn create_vault_contract(env: &Env) -> (SolvBTCVaultClient, Address) {
     let contract_address = env.register(
         SolvBTCVault,
         (
-            admin,
+            admin.clone(),
             token_contract,
             oracle,
             treasurer,
@@ -40,7 +40,7 @@ fn create_vault_contract(env: &Env) -> (SolvBTCVaultClient, Address) {
         ),
     );
     let client = SolvBTCVaultClient::new(env, &contract_address);
-    (client, contract_address)
+    (client, contract_address, admin)
 }
 
 // add supported currency
@@ -95,13 +95,13 @@ fn test_vault_upgrade_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _addr) = create_vault_contract(&env);
+    let (client, _addr, admin) = create_vault_contract(&env);
     let wasm_hash = env
         .deployer()
         .upload_contract_wasm(Bytes::from_slice(&env, VAULT_WASM_BYTES));
 
     // If this call does not panic, treat as success
-    client.upgrade(&wasm_hash);
+    client.upgrade(&wasm_hash, &admin);
 
     assert_eq!(100, client.get_withdraw_fee_ratio());
 }
@@ -112,9 +112,9 @@ fn test_vault_upgrade_with_unuploaded_hash_should_panic() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _addr) = create_vault_contract(&env);
+    let (client, _addr, admin) = create_vault_contract(&env);
     let fake = BytesN::from_array(&env, &[9u8; 32]);
-    client.upgrade(&fake);
+    client.upgrade(&fake, &admin);
 }
 
 #[test]
@@ -122,11 +122,13 @@ fn test_vault_upgrade_with_unuploaded_hash_should_panic() {
 fn test_vault_upgrade_requires_owner_should_panic() {
     let env = Env::default();
     // Do not mock auth so only_owner check fails
-    let (client, _addr) = create_vault_contract(&env);
+    let (client, _addr, admin) = create_vault_contract(&env);
     let wasm_hash = env
         .deployer()
         .upload_contract_wasm(Bytes::from_slice(&env, VAULT_WASM_BYTES));
-    client.upgrade(&wasm_hash);
+    // Using a different address (not the admin) as operator
+    let non_admin = Address::generate(&env);
+    client.upgrade(&wasm_hash, &non_admin);
 }
 
 // ==================== Configuration Helper Functions ====================
@@ -193,7 +195,7 @@ fn test_eip712_domain_separator_generation() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -216,7 +218,7 @@ fn test_eip712_domain_management() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -238,7 +240,7 @@ fn test_withdraw_verifier_key_management() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -257,7 +259,7 @@ fn test_withdraw_verifier_key_management() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #312)")] // InvalidRequestStatus (checked before signature)
+#[should_panic(expected = "HostError: Error(Contract, #311)")] // InvalidRequestStatus (checked before signature)
 fn test_withdraw_invalid_signature_content() {
     let env = Env::default();
     env.mock_all_auths();
@@ -265,7 +267,7 @@ fn test_withdraw_invalid_signature_content() {
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use minimal configuration for testing
     let config = initialize_vault_with_defaults(&env, &client);
@@ -300,7 +302,7 @@ fn test_eip712_message_construction() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -317,7 +319,7 @@ fn test_basic_initialize_success() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -338,7 +340,7 @@ fn test_initialize_with_default_config() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     
     // Use new configuration-based initialization - one line!
     let config = initialize_vault_with_defaults(&env, &client);
@@ -357,7 +359,7 @@ fn test_initialize_with_custom_config() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     
     // Create custom configuration - only modify needed parameters
     let custom_admin = Address::generate(&env);
@@ -372,7 +374,7 @@ fn test_initialize_with_custom_domain() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     
     // Setter removed; ensure default domain remains unchanged
     assert_eq!(client.get_eip712_domain_name(), String::from_str(&env, "Solv Vault Withdraw"));
@@ -384,7 +386,7 @@ fn test_config_vs_traditional_initialization() {
     env.mock_all_auths();
 
     // Test 1: Traditional way (verbose)
-    let (client1, _) = create_vault_contract(&env);
+    let (client1, _, _) = create_vault_contract(&env);
     let admin = Address::generate(&env);
     let token_contract = Address::generate(&env);
     let oracle = Address::generate(&env);
@@ -393,7 +395,7 @@ fn test_config_vs_traditional_initialization() {
     let fee_receiver = Address::generate(&env);
 
     // Test 2: New config way (concise)
-    let (client2, _) = create_vault_contract(&env);
+    let (client2, _, _) = create_vault_contract(&env);
     let _config = initialize_vault_with_defaults(&env, &client2);
 
     // Both should have same basic functionality (constructor initializes with 100)
@@ -427,7 +429,7 @@ fn test_withdraw_structure_validation() {
 
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -471,7 +473,7 @@ fn test_mock_public_key_format() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #312)")] // InvalidRequestStatus (checked before signature)
+#[should_panic(expected = "HostError: Error(Contract, #311)")] // InvalidRequestStatus (checked before signature)
 fn test_withdraw_with_mock_pubkey() {
     let env = Env::default();
     env.mock_all_auths();
@@ -479,7 +481,7 @@ fn test_withdraw_with_mock_pubkey() {
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -515,11 +517,10 @@ fn test_error_enum() {
     assert_eq!(VaultError::InvalidNav as u32, 306);
     assert_eq!(VaultError::WithdrawFeeRatioNotSet as u32, 307);
     assert_eq!(VaultError::InvalidWithdrawFeeRatio as u32, 308);
-    assert_eq!(VaultError::InvalidSignatureFormat as u32, 309);
-    assert_eq!(VaultError::RequestAlreadyExists as u32, 310);
-    assert_eq!(VaultError::InsufficientBalance as u32, 311);
-    assert_eq!(VaultError::InvalidRequestStatus as u32, 312);
-    assert_eq!(VaultError::InvalidDepositFeeRatio as u32, 313);
+    assert_eq!(VaultError::RequestAlreadyExists as u32, 309);
+    assert_eq!(VaultError::InsufficientBalance as u32, 310);
+    assert_eq!(VaultError::InvalidRequestStatus as u32, 311);
+    assert_eq!(VaultError::InvalidDepositFeeRatio as u32, 312);
 }
 
 // ==================== System Management Tests ====================
@@ -529,7 +530,7 @@ fn test_set_oracle_by_admin() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -552,7 +553,7 @@ fn test_set_treasurer_by_admin() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -576,7 +577,7 @@ fn test_set_withdraw_fee_ratio_by_admin() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -602,7 +603,7 @@ fn test_remove_currency_by_admin() {
 
     let currency = Address::generate(&env);
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -623,7 +624,7 @@ fn test_get_supported_currencies() {
 
     let currency1 = Address::generate(&env);
     let currency2 = Address::generate(&env);
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -650,7 +651,7 @@ fn test_get_withdraw_fee_receiver() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
@@ -1063,7 +1064,7 @@ fn test_treasurer_deposit() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use default configuration
     let config = initialize_vault_with_defaults(&env, &client);
@@ -1087,7 +1088,7 @@ fn test_withdraw_request() {
     env.mock_all_auths();
 
     let user = Address::generate(&env);
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     // Use default configuration
     let config = initialize_vault_with_defaults(&env, &client);
@@ -1113,7 +1114,7 @@ fn test_withdraw_request() {
 fn test_add_currency_authorization() {
     let env = Env::default();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     
     // Initialize with default configuration (using admin permission)
     env.mock_all_auths();
@@ -1173,6 +1174,21 @@ fn test_remove_currency_not_exists() {
     client.remove_currency_by_admin(&currency);
 }
 
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #304)")] // CurrencyNotExists
+fn test_remove_currency_when_map_absent_triggers_map_new() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Build vault without adding any currency map entries
+    let (client, _, _) = create_vault_contract(&env);
+    let _ = initialize_vault_with_defaults(&env, &client);
+
+    // Remove a random currency; AllowedCurrency map key is absent so Map::new(&env) branch executes
+    let random_currency = Address::generate(&env);
+    client.remove_currency_by_admin(&random_currency);
+}
+
 
 
 /// Test deposit with unsupported currency
@@ -1182,7 +1198,7 @@ fn test_deposit_unsupported_currency() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
@@ -1197,7 +1213,7 @@ fn test_deposit_invalid_amount_zero() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
@@ -1215,7 +1231,7 @@ fn test_deposit_invalid_amount_negative() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
@@ -1233,7 +1249,7 @@ fn test_withdraw_request_invalid_amount_zero() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let request_hash = create_request_hash(&env, 1);
@@ -1248,7 +1264,7 @@ fn test_withdraw_request_invalid_amount_negative() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let request_hash = create_request_hash(&env, 1);
@@ -1264,7 +1280,7 @@ fn test_treasurer_deposit_invalid_amount_zero() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     client.treasurer_deposit(&0);
@@ -1277,7 +1293,7 @@ fn test_treasurer_deposit_invalid_amount_negative() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     client.treasurer_deposit(&-100);
@@ -1290,7 +1306,7 @@ fn test_add_currency_exceeds_max_limit() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Add maximum number of currencies (10)
@@ -1310,7 +1326,7 @@ fn test_eip712_domain_queries() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     let domain_name = client.get_eip712_domain_name();
@@ -1330,7 +1346,7 @@ fn test_admin_address_query() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     let admin = client.get_admin();
@@ -1343,7 +1359,7 @@ fn test_is_currency_supported() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     let currency = Address::generate(&env);
     
@@ -1365,7 +1381,7 @@ fn test_initialize_with_config_function() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let _config = read_config_from_chain(&env, &client);
     // constructor-only: use setter to verify interface exists
     let new_oracle = Address::generate(&env);
@@ -1379,7 +1395,7 @@ fn test_vault_operations_traits_coverage() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Test various trait methods are accessible
@@ -1396,7 +1412,7 @@ fn test_system_management_traits() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Test all getter functions
@@ -1411,7 +1427,7 @@ fn test_zero_fee_ratio_initialization() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let _config = create_custom_init_config(&env, None, Some(0));
     client.set_withdraw_fee_ratio_by_admin(&0);
     assert_eq!(client.get_withdraw_fee_ratio(), 0);
@@ -1423,7 +1439,7 @@ fn test_maximum_fee_ratio_initialization() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let _ = create_custom_init_config(&env, None, Some(10000)); // 100%
     // set to 10000 by setter
     client.set_withdraw_fee_ratio_by_admin(&10000);
@@ -1439,7 +1455,7 @@ fn test_deposit_oracle_not_set() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
 
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
@@ -1458,7 +1474,7 @@ fn test_deposit_zero_withdraw_fee_ratio() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     
     // Initialize with zero fee ratio
     let _ = create_custom_init_config(&env, None, Some(0));
@@ -1480,7 +1496,7 @@ fn test_withdraw_currency_not_set() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Constructor sets withdraw currency; should not be None
@@ -1493,7 +1509,7 @@ fn test_eip712_advanced_functions() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Test EIP712 functions
@@ -1517,7 +1533,7 @@ fn test_currency_supported_function() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     let currency1 = Address::generate(&env);
@@ -1555,7 +1571,7 @@ fn test_withdraw_fee_receiver_management() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Initial fee receiver should be set to config value
@@ -1576,7 +1592,7 @@ fn test_complete_system_management() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Test setting all system components
@@ -1691,6 +1707,7 @@ fn test_event_structures_coverage() {
     let withdraw_event = WithdrawEvent {
         amount: 950,
         fee: 5,
+        request_hash: Bytes::from_slice(&env, b"test_request_hash"),
     };
     
     let withdraw_event2 = withdraw_event.clone();
@@ -1821,7 +1838,7 @@ fn test_deposit_oracle_not_configured() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
     
@@ -1833,7 +1850,7 @@ fn test_deposit_oracle_not_configured() {
 
 /// Test withdraw function - invalid request status
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #312)")] // InvalidRequestStatus
+#[should_panic(expected = "HostError: Error(Contract, #311)")] // InvalidRequestStatus
 fn test_withdraw_invalid_request_status() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1864,7 +1881,7 @@ fn test_withdraw_request_with_zero_withdraw_fee_ratio_allows_operation() {
 
 /// Zero withdraw fee ratio should not trigger config panic; still fails with no request
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #312)")] // InvalidRequestStatus
+#[should_panic(expected = "HostError: Error(Contract, #311)")] // InvalidRequestStatus
 fn test_withdraw_with_zero_withdraw_fee_ratio_should_panic() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1931,7 +1948,7 @@ fn test_internal_functions_through_public_apis() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Test get functions that exercise internal functions
@@ -1968,7 +1985,7 @@ fn test_vault_error_conditions() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     
     // Test operations on uninitialized vault
     let user = Address::generate(&env);
@@ -1986,7 +2003,7 @@ fn test_vault_error_conditions() {
 
 /// Test withdrawal request duplicate detection
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #310)")]
+#[should_panic(expected = "HostError: Error(Contract, #309)")]
 fn test_withdraw_request_duplicate() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2004,7 +2021,7 @@ fn test_withdraw_request_duplicate() {
 
 /// Test withdraw_request should fail when user shares balance is insufficient
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #311)")]
+#[should_panic(expected = "HostError: Error(Contract, #310)")]
 fn test_withdraw_request_insufficient_balance() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2025,7 +2042,7 @@ fn test_eip712_message_creation() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Test EIP712 domain functions
@@ -2050,7 +2067,7 @@ fn test_calculate_mint_amount_through_deposit() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     let user = Address::generate(&env);
     let currency = Address::generate(&env);
@@ -2071,7 +2088,7 @@ fn test_vault_query_functions_comprehensive() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Test all query functions
@@ -2104,7 +2121,7 @@ fn test_deposit_missing_minter_manager() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     
     // Add minimal configuration to get past initial validation
     let admin = Address::generate(&env);
@@ -2126,7 +2143,7 @@ fn test_error_conditions_comprehensive() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Test various query functions work after initialization
@@ -2145,7 +2162,7 @@ fn test_signature_verification_edge_cases() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Test verifier key management
@@ -2164,7 +2181,7 @@ fn test_eip712_domain_comprehensive() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     
     // constructor domain name
     assert_eq!(client.get_eip712_domain_name(), String::from_str(&env, "Solv Vault Withdraw"));
@@ -2190,7 +2207,7 @@ fn test_system_configuration_management() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     
     // Initialize first
     let admin = Address::generate(&env);
@@ -2228,7 +2245,7 @@ fn test_currency_management_comprehensive() {
     let env = Env::default();
     env.mock_all_auths();
     
-    let (client, _) = create_vault_contract(&env);
+    let (client, _, _) = create_vault_contract(&env);
     let config = initialize_vault_with_defaults(&env, &client);
     
     // Test adding multiple currencies
@@ -2316,7 +2333,7 @@ fn test_set_deposit_fee_ratio_by_admin() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #313)")]
+#[should_panic(expected = "Error(Contract, #312)")]
 fn test_set_deposit_fee_ratio_invalid() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2355,7 +2372,7 @@ fn test_set_deposit_fee_ratio_invalid() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #313)")]
+#[should_panic(expected = "Error(Contract, #312)")]
 fn test_set_deposit_fee_ratio_negative() {
     let env = Env::default();
     env.mock_all_auths();
