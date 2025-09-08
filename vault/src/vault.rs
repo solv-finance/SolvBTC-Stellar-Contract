@@ -29,6 +29,27 @@ const EIP712_DOMAIN_VERSION_BYTES: &[u8] = b"1";
 
 // ==================== Data Structures ====================
 
+/// Signature type enum for better readability and type safety
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum SignatureType {
+    Ed25519 = 0,
+    Secp256k1 = 1,
+}
+
+impl SignatureType {
+    pub fn to_u32(self) -> u32 {
+        self as u32
+    }
+    pub fn from_u32(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(SignatureType::Ed25519),
+            1 => Some(SignatureType::Secp256k1),
+            _ => None,
+        }
+    }
+}
+
 /// Storage data key enum
 #[derive(Clone)]
 #[contracttype]
@@ -37,8 +58,10 @@ pub enum DataKey {
     Oracle,
     /// Treasurer address
     Treasurer,
-    /// Withdrawal verifier public key (32 bytes)
-    WithdrawVerifier,
+    /// Withdrawal verifier map: u32 (signature_type) -> PublicKey (Bytes)
+    /// SignatureType::ED25519 (32 bytes)
+    /// SignatureType::SECP256K1 (65 bytes uncompressed)
+    WithdrawVerifier(u32),
     /// Token contract address
     TokenContract,
     /// Supported currencies mapping (Map<Address, bool>)
@@ -98,6 +121,10 @@ pub enum VaultError {
     InvalidDepositFeeRatio = 312,
     /// Insufficient permissions
     Unauthorized = 313,
+    /// Invalid signature type
+    InvalidSignatureType = 314,
+    /// Withdraw verifier not set
+    WithdrawVerifierNotSet = 315,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -143,9 +170,11 @@ impl SolvBTCVault {
         env.storage()
             .instance()
             .set(&DataKey::Treasurer, &treasurer);
-        env.storage()
-            .instance()
-            .set(&DataKey::WithdrawVerifier, &withdraw_verifier);
+        // Set Ed25519 verifier as default
+        env.storage().instance().set(
+            &DataKey::WithdrawVerifier(SignatureType::Ed25519.to_u32()),
+            &withdraw_verifier,
+        );
         env.storage()
             .instance()
             .set(&DataKey::WithdrawFeeRatio, &withdraw_fee_ratio);
@@ -335,6 +364,8 @@ impl VaultOperations for SolvBTCVault {
         nav: i128,
         request_hash: Bytes,
         signature: BytesN<64>,
+        signature_type: u32, // 0 = Ed25519, 1 = Secp256k1
+        recovery_id: u32,
     ) -> i128 {
         from.require_auth(); // Verify caller identity
 
@@ -354,7 +385,7 @@ impl VaultOperations for SolvBTCVault {
             .get(&DataKey::WithdrawCurrency)
             .unwrap();
 
-        // Get request key - second hash with all parameters 
+        // Get request key - second hash with all parameters
         let request_key =
             Self::generate_request_key(&env, &from, &withdraw_token, &request_hash, shares, nav);
 
@@ -370,16 +401,61 @@ impl VaultOperations for SolvBTCVault {
             panic_with_error!(env, VaultError::InvalidRequestStatus);
         }
 
-        // Verify signature
-        Self::verify_withdraw_signature(
-            &env,
-            &from,
-            shares,
-            &withdraw_token,
-            nav,
-            &request_hash,
-            &signature,
-        );
+        // Create common withdraw message and EIP712 message for both signature types
+        let withdraw_message =
+            Self::create_withdraw_message(&env, &from, shares, &withdraw_token, nav, &request_hash);
+        let message_hash = env.crypto().sha256(&withdraw_message);
+        let eip712_message =
+            Self::create_eip712_signature_message(&env, &Bytes::from(message_hash.clone()));
+        // Hash the EIP712 message to 32-byte digest
+        let digest = env.crypto().sha256(&eip712_message);
+
+        // Convert u32 to SignatureType enum
+        let sig_type = SignatureType::from_u32(signature_type)
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidSignatureType));
+
+        // Verify signature based on type
+        match sig_type {
+            // Verify Ed25519 signature
+            SignatureType::Ed25519 => {
+                // Get Ed25519 verifier public key from Map
+                let verifier_public_key: BytesN<32> = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::WithdrawVerifier(SignatureType::Ed25519.to_u32()))
+                    .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawVerifierNotSet));
+
+                // Verify EIP712 standard signature (ed25519)
+                Self::verify_ed25519_signature(
+                    &env,
+                    &verifier_public_key,
+                    &digest.into(),
+                    &signature,
+                );
+            }
+
+            // Verify Secp256k1 signature
+            SignatureType::Secp256k1 => {
+                // Get Secp256k1 verifier public key from Map
+                let verifier_public_key: BytesN<65> = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::WithdrawVerifier(
+                        SignatureType::Secp256k1.to_u32(),
+                    ))
+                    .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawVerifierNotSet));
+
+                // Recover public key and compare with stored 65-byte uncompressed key
+                let recovered = env
+                    .crypto()
+                    .secp256k1_recover(&digest, &signature, recovery_id);
+
+                // Compare recovered public key with stored 65-byte uncompressed key
+                if recovered != verifier_public_key {
+                    panic_with_error!(env, VaultError::Unauthorized);
+                }
+            }
+        }
 
         // Get fee ratio
         let withdraw_fee_ratio = Self::get_withdraw_fee_ratio_internal(&env);
@@ -576,15 +652,18 @@ impl CurrencyManagement for SolvBTCVault {
 #[contractimpl]
 impl SystemManagement for SolvBTCVault {
     #[only_owner]
-    fn set_withdraw_verifier_by_admin(env: Env, verifier_public_key: BytesN<32>) {
-        env.storage()
-            .instance()
-            .set(&DataKey::WithdrawVerifier, &verifier_public_key);
+    fn set_withdraw_verifier_by_admin(env: Env, signature_type: u32, verifier_public_key: Bytes) {
+        // Store verifier public key based on signature type
+        env.storage().instance().set(
+            &DataKey::WithdrawVerifier(signature_type),
+            &verifier_public_key,
+        );
 
         // Publish event
         env.events().publish(
             (
                 Symbol::new(&env, "set_withdraw_verifier"),
+                signature_type,
                 verifier_public_key.clone(),
             ),
             Self::get_admin_internal(&env),
@@ -679,11 +758,10 @@ impl VaultQuery for SolvBTCVault {
         Self::get_admin_internal(&env)
     }
 
-    fn get_withdraw_verifier(env: Env) -> BytesN<32> {
+    fn get_withdraw_verifier(env: Env, signature_type: u32) -> Option<Bytes> {
         env.storage()
             .instance()
-            .get(&DataKey::WithdrawVerifier)
-            .unwrap() // Set in constructor
+            .get(&DataKey::WithdrawVerifier(signature_type))
     }
 
     fn get_oracle(env: Env) -> Address {
@@ -793,13 +871,11 @@ impl SolvBTCVault {
     // Calculate EIP712 DomainSeparator
     fn calculate_domain_separator(env: &Env) -> Bytes {
         // Implement domain separator calculation according to EIP712 standard
-        // DomainSeparator = keccak256(typeHash + nameHash + versionHash + chainId + verifyingContract + salt)
-
         let mut domain_encoded = Bytes::new(env);
 
         // 1. EIP712Domain's TypeHash
         // keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)")
-        let type_hash = env.crypto().keccak256(&Bytes::from_slice(env,
+        let type_hash = env.crypto().sha256(&Bytes::from_slice(env,
             b"Withdraw(uint256 chainId,string action,address user,address withdrawToken,uint256 shares,uint256 nav,bytes32 requestHash)"));
         domain_encoded.append(&type_hash.into());
 
@@ -850,12 +926,6 @@ impl SolvBTCVault {
     }
 
     /// Get verifier public key
-    fn get_verifier_public_key(env: &Env) -> BytesN<32> {
-        env.storage()
-            .instance()
-            .get(&DataKey::WithdrawVerifier)
-            .unwrap() // Set in constructor
-    }
 
     /// Get treasurer address
     fn get_treasurer_internal(env: &Env) -> Address {
@@ -959,40 +1029,6 @@ impl SolvBTCVault {
         TokenClient::new(env, token).transfer(&env.current_contract_address(), to, &amount);
     }
 
-    /// Verify withdrawal signature (using EIP712 standard)
-    fn verify_withdraw_signature(
-        env: &Env,
-        user: &Address,
-        target_amount: i128,
-        target_token: &Address,
-        nav: i128,
-        request_hash: &Bytes,
-        signature: &BytesN<64>,
-    ) {
-        // Get verifier public key
-        let verifier_public_key = Self::get_verifier_public_key(env);
-
-        // 1. Create withdrawal message with action
-        let withdraw_message = Self::create_withdraw_message(
-            env,
-            user,
-            target_amount,
-            target_token,
-            nav,
-            request_hash,
-        );
-
-        // 2. Calculate message hash
-        let message_hash = env.crypto().sha256(&withdraw_message);
-        let message_hash_bytes: Bytes = message_hash.into();
-
-        // 3. Create EIP712 standard signature verification message: \x19\x01 + DomainSeparator + MessageHash
-        let eip712_message = Self::create_eip712_signature_message(env, &message_hash_bytes);
-
-        // Verify EIP712 standard signature (if signature is invalid will panic)
-        Self::verify_ed25519_signature(env, &verifier_public_key, &eip712_message, &signature);
-    }
-
     // Calculate mint amount for user after user Deposit
     fn calculate_mint_amount(
         env: &Env,
@@ -1076,7 +1112,7 @@ impl SolvBTCVault {
         data.append(&nav_bytes);
 
         // Hash the concatenated data
-        let request_key_hash = env.crypto().keccak256(&data);
+        let request_key_hash = env.crypto().sha256(&data);
         Bytes::from_array(env, &request_key_hash.to_array())
     }
 
@@ -1108,7 +1144,7 @@ impl UpgradeableInternal for SolvBTCVault {
         operator.require_auth();
         let owner = ownable::get_owner(e).unwrap();
         if *operator != owner {
-            panic_with_error!(e, VaultError::Unauthorized); 
+            panic_with_error!(e, VaultError::Unauthorized);
         }
     }
 }
