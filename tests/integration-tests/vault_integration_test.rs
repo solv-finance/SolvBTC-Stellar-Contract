@@ -222,6 +222,11 @@ impl VaultTestEnv {
         self.get_wbtc_token_client().balance(&self.treasurer)
     }
 
+    /// Get vault contract's WBTC balance
+    fn get_vault_wbtc_balance(&self) -> i128 {
+        self.get_wbtc_token_client().balance(&self.vault_addr)
+    }
+
     /// Get user's SolvBTC balance
     fn get_user_solvbtc_balance(&self) -> i128 {
         self.get_solvbtc_token_client().balance(&self.user)
@@ -371,8 +376,13 @@ impl VaultTestEnv {
         let eip712_message = self.create_eip712_signature_message(&message_hash_bytes);
         Self::debug_print_bytes("EIP712 message", &eip712_message);
 
+        // 3.5. Ed25519 requires an additional sha256 hash on the eip712_message
+        let digest = self.env.crypto().sha256(&eip712_message);
+        let digest_bytes: Bytes = digest.into();
+        Self::debug_print_bytes("Final digest for Ed25519", &digest_bytes);
+
         // 4. Convert message to signable format
-        let message_vec = Self::bytes_to_vec_for_signing(&eip712_message);
+        let message_vec = Self::bytes_to_vec_for_signing(&digest_bytes);
 
         // 5. Get keypair and sign
         let (signing_key, verifying_key) = Self::create_real_keypair();
@@ -455,6 +465,8 @@ impl VaultTestEnv {
             &nav,
             &request_hash,
             &signature,
+            &0u32,
+            &0u32,
         )
     }
 }
@@ -741,7 +753,7 @@ fn test_complete_vault_withdraw_flow() {
     assert_eq!(domain_separator.len(), 32);
 
     // Verify withdrawal settings
-    let withdraw_verifier = vault_client.get_withdraw_verifier();
+    let withdraw_verifier = vault_client.get_withdraw_verifier(&0u32);
     let withdraw_ratio = vault_client.get_withdraw_fee_ratio();
     let withdraw_currency = vault_client.get_withdraw_currency();
 
@@ -758,7 +770,7 @@ fn test_complete_vault_withdraw_flow() {
     expected_verifier_bytes[0] = 0xDE;
     expected_verifier_bytes[1] = 0xAD;
     let expected_verifier = BytesN::from_array(&test_env.env, &expected_verifier_bytes);
-    assert_eq!(withdraw_verifier, expected_verifier);
+    assert_eq!(withdraw_verifier, Some(expected_verifier.into()));
     assert_eq!(withdraw_ratio, 100); // 1%
     assert!(withdraw_currency.is_some());
     assert_eq!(withdraw_currency.unwrap(), test_env.wbtc_token_addr);
@@ -818,7 +830,7 @@ fn test_withdraw_error_scenarios() {
     println!("=== Test 3: Contract initialization state ===");
 
     let admin = vault_client.get_admin();
-    let withdraw_verifier = vault_client.get_withdraw_verifier();
+    let withdraw_verifier = vault_client.get_withdraw_verifier(&0u32);
     let withdraw_ratio = vault_client.get_withdraw_fee_ratio();
 
     assert_eq!(admin, test_env.admin);
@@ -826,7 +838,7 @@ fn test_withdraw_error_scenarios() {
     expected_verifier_bytes[0] = 0xDE;
     expected_verifier_bytes[1] = 0xAD;
     let expected_verifier = BytesN::from_array(&test_env.env, &expected_verifier_bytes);
-    assert_eq!(withdraw_verifier, expected_verifier);
+    assert_eq!(withdraw_verifier, Some(expected_verifier.into()));
     assert_eq!(withdraw_ratio, 100);
 
     println!("✓ Contract initialization state test passed");
@@ -887,7 +899,7 @@ fn test_withdraw_signature_validation_structure() {
 
     // 6. Verify contract state
     let vault_client = test_env.get_vault_client();
-    let withdraw_verifier = vault_client.get_withdraw_verifier();
+    let withdraw_verifier = vault_client.get_withdraw_verifier(&0u32);
     let withdraw_currency = vault_client.get_withdraw_currency();
     let is_currency_supported = vault_client.is_currency_supported(&test_env.wbtc_token_addr);
 
@@ -896,7 +908,8 @@ fn test_withdraw_signature_validation_structure() {
     expected_verifier_bytes[1] = 0xAD;
     let expected_verifier = BytesN::from_array(&test_env.env, &expected_verifier_bytes);
     assert_eq!(
-        withdraw_verifier, expected_verifier,
+        withdraw_verifier,
+        Some(expected_verifier.into()),
         "Verifier public key should match"
     );
     assert!(
@@ -948,6 +961,137 @@ fn test_withdraw_signature_validation_structure() {
 
 #[test]
 #[should_panic]
+fn test_withdraw_secp256k1_invalid_signature_should_panic_integration() {
+    // 1) Initialize environment and relationships
+    let test_env = VaultTestEnv::new();
+    test_env.setup_relationships();
+
+    // 2) Set secp256k1 verifier (65-byte uncompressed public key)
+    let mut pubkey_bytes = [0u8; 65];
+    pubkey_bytes[0] = 0x04;
+    for i in 1..65 {
+        pubkey_bytes[i] = i as u8;
+    }
+    let secp_pub = Bytes::from_slice(&test_env.env, &pubkey_bytes);
+    test_env
+        .get_vault_client()
+        .set_withdraw_verifier_by_admin(&1u32, &secp_pub);
+
+    // 3) Mint shares to user
+    let deposit_amount = 100_000_000i128;
+    test_env.mint_wbtc_to_user(deposit_amount);
+    test_env.approve_vault_for_wbtc(deposit_amount);
+    test_env.set_nav_value(100_000_000i128);
+    let minted = test_env.deposit(deposit_amount);
+
+    // 4) Create withdraw_request, ensure status is Pending
+    let shares = minted / 2;
+    let request_hash = test_env.create_request_hash(9);
+    test_env
+        .get_vault_client()
+        .withdraw_request(&test_env.user, &shares, &request_hash);
+
+    // 5) Use invalid r||s and recovery_id=0 to trigger secp256k1 branch and expect panic
+    let invalid_sig = BytesN::<64>::from_array(&test_env.env, &[0u8; 64]);
+    test_env.get_vault_client().withdraw(
+        &test_env.user,
+        &shares,
+        &100_000_000i128,
+        &request_hash,
+        &invalid_sig,
+        &1u32, // signature_type = secp256k1
+        &0u32, // recovery_id
+    );
+}
+
+#[test]
+fn test_withdraw_ed25519_success_integration() {
+    // 1) Initialize environment and relationships
+    let test_env = VaultTestEnv::new();
+    test_env.setup_relationships();
+
+    // 2) Set ed25519 verifier = real public key used by signer
+    let ed_pub = test_env.get_real_public_key(); // Bytes(32)
+    test_env
+        .get_vault_client()
+        .set_withdraw_verifier_by_admin(&0u32, &ed_pub);
+
+    // 3) Prepare balances: user deposit to get shares; treasurer provides liquidity
+    let nav = 100_000_000i128; // 1.0
+    let deposit_amount = 200_000_000i128; // 2 WBTC
+    test_env.mint_wbtc_to_user(deposit_amount);
+    test_env.approve_vault_for_wbtc(deposit_amount);
+    test_env.set_nav_value(nav);
+    let minted = test_env.deposit(deposit_amount);
+
+    // Treasurer liquidity >= expected withdraw amount
+    let liq = 200_000_000i128; // 2 WBTC
+    test_env.mint_wbtc_to_treasurer(liq);
+    test_env.approve_vault_for_treasurer_wbtc(liq);
+    test_env.treasurer_deposit_wbtc(liq);
+
+    // 4) Create withdraw_request for shares
+    let shares = minted / 2; // withdraw half
+    let request_hash = test_env.create_request_hash(11);
+    test_env
+        .get_vault_client()
+        .withdraw_request(&test_env.user, &shares, &request_hash);
+
+    // 5) Sign EIP712 message with real ed25519 key
+    let signature = test_env.sign_vault_withdraw_message(
+        &test_env.user,
+        shares,
+        &test_env.wbtc_token_addr,
+        nav,
+        &request_hash,
+    );
+
+    // 6) Call withdraw and verify balances
+    let before_user_wbtc = test_env.get_user_wbtc_balance();
+    let before_treas_wbtc = test_env.get_treasurer_wbtc_balance();
+    let before_vault_wbtc = test_env.get_vault_wbtc_balance();
+
+    // Compute expected amount using on-chain formula
+    let withdraw_dec = test_env.get_wbtc_token_client().decimals();
+    let shares_dec = test_env.get_solvbtc_token_client().decimals();
+    let nav_dec = test_env.get_oracle_client().get_nav_decimals();
+    let pow10 = |n: u32| -> i128 {
+        let mut x = 1i128;
+        for _ in 0..n {
+            x *= 10;
+        }
+        x
+    };
+    let amount = (shares * nav * pow10(withdraw_dec)) / (pow10(nav_dec) * pow10(shares_dec));
+    let fee_bps = test_env.get_vault_client().get_withdraw_fee_ratio();
+    let expected_fee = (amount * fee_bps) / 10000;
+    let expected_after = amount - expected_fee;
+
+    let actual_after = test_env.get_vault_client().withdraw(
+        &test_env.user,
+        &shares,
+        &nav,
+        &request_hash,
+        &signature,
+        &0u32, // signature_type=ed25519
+        &0u32, // recovery ignored
+    );
+
+    let after_user_wbtc = test_env.get_user_wbtc_balance();
+    let after_treas_wbtc = test_env.get_treasurer_wbtc_balance();
+    let after_vault_wbtc = test_env.get_vault_wbtc_balance();
+
+    assert_eq!(actual_after, expected_after);
+    assert_eq!(after_user_wbtc - before_user_wbtc, expected_after);
+    // Treasurer balance should remain the same since funds are transferred from vault contract
+    // not from treasurer directly
+    assert_eq!(before_treas_wbtc, after_treas_wbtc);
+    // Vault contract balance should decrease by the total amount (including fee)
+    assert_eq!(before_vault_wbtc - after_vault_wbtc, amount);
+}
+
+#[test]
+#[should_panic]
 fn test_withdraw_with_invalid_signature_should_panic() {
     println!("Starting test invalid signature should cause panic");
 
@@ -982,6 +1126,105 @@ fn test_withdraw_with_invalid_signature_should_panic() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #313)")] // VaultError::Unauthorized = 313
+fn test_withdraw_secp256k1_wrong_pubkey_should_panic() {
+    // This test covers the Unauthorized error at line 1086 in vault.rs
+    // when recovered public key doesn't match expected public key
+
+    let test_env = VaultTestEnv::new();
+    test_env.setup_relationships();
+
+    // 1. Set a specific secp256k1 public key in the contract
+    let mut expected_pubkey_bytes = [0u8; 65];
+    expected_pubkey_bytes[0] = 0x04; // uncompressed public key prefix
+    for i in 1..65 {
+        expected_pubkey_bytes[i] = (i * 2) as u8; // Some deterministic pattern
+    }
+    let expected_pub = Bytes::from_slice(&test_env.env, &expected_pubkey_bytes);
+    test_env
+        .get_vault_client()
+        .set_withdraw_verifier_by_admin(&1u32, &expected_pub);
+
+    // 2. Prepare: deposit to get shares
+    let deposit_amount = 100_000_000i128;
+    test_env.mint_wbtc_to_user(deposit_amount);
+    test_env.approve_vault_for_wbtc(deposit_amount);
+    test_env.set_nav_value(100_000_000i128);
+    let minted = test_env.deposit(deposit_amount);
+
+    // 3. Create withdraw request
+    let shares = minted / 2;
+    let request_hash = test_env.create_request_hash(42);
+    test_env
+        .get_vault_client()
+        .withdraw_request(&test_env.user, &shares, &request_hash);
+
+    // 4. Prepare liquidity for withdrawal
+    let liquidity = 200_000_000i128;
+    test_env.mint_wbtc_to_treasurer(liquidity);
+    test_env.approve_vault_for_treasurer_wbtc(liquidity);
+    test_env.treasurer_deposit_wbtc(liquidity);
+
+    // 5. Create a valid secp256k1 signature but with a DIFFERENT private key
+    // This will produce a valid signature that recovers to a different public key
+
+    // Create the withdraw message
+    let withdraw_message = test_env.create_vault_withdraw_message(
+        &test_env.user,
+        shares,
+        &test_env.wbtc_token_addr,
+        100_000_000i128,
+        &request_hash,
+    );
+
+    // Hash the message
+    let message_hash = test_env.env.crypto().sha256(&withdraw_message);
+
+    // Create EIP712 message
+    let domain_separator = Bytes::from_slice(
+        &test_env.env,
+        &[
+            0xa5, 0x93, 0x7d, 0xb5, 0x54, 0xc5, 0x13, 0x4b, 0xd1, 0xec, 0x9f, 0x43, 0xfb, 0x96,
+            0x12, 0xab, 0xda, 0x34, 0x02, 0xed, 0xd9, 0x7e, 0x43, 0x3d, 0x26, 0xd4, 0x63, 0xae,
+            0x26, 0x55, 0x18, 0x0a,
+        ],
+    );
+    let prefix = Bytes::from_slice(&test_env.env, &[0x19, 0x01]);
+    let mut eip712_message = Bytes::new(&test_env.env);
+    eip712_message.append(&prefix);
+    eip712_message.append(&domain_separator);
+    eip712_message.append(&Bytes::from(message_hash));
+
+    // Create a valid secp256k1 signature that will recover to a different public key
+    // Using a known valid signature (r||s format, 64 bytes total)
+    // This signature is valid but will recover to a different public key than expected
+    let wrong_signature = BytesN::<64>::from_array(
+        &test_env.env,
+        &[
+            // r (32 bytes) - valid secp256k1 r value
+            0x8b, 0x9d, 0x7a, 0xe8, 0x56, 0x85, 0x37, 0x56, 0x14, 0x92, 0xf6, 0xd2, 0x18, 0x24,
+            0xf2, 0xb8, 0x48, 0x86, 0x89, 0xb4, 0xae, 0x11, 0x25, 0x01, 0x43, 0x4f, 0x8d, 0x8c,
+            0xc5, 0x11, 0x50, 0x66, // s (32 bytes) - valid secp256k1 s value
+            0x3f, 0xdd, 0x94, 0xc9, 0x7f, 0x25, 0xe4, 0x18, 0x28, 0xa3, 0x7d, 0xfd, 0x81, 0x9f,
+            0xc0, 0xad, 0x23, 0xc7, 0xea, 0x67, 0xe7, 0xb3, 0xe7, 0x02, 0xd9, 0xd3, 0xe2, 0xf9,
+            0x54, 0x37, 0x75, 0x8e,
+        ],
+    );
+
+    // 6. This should panic with Unauthorized error because the recovered public key
+    // won't match the expected public key stored in the contract
+    test_env.get_vault_client().withdraw(
+        &test_env.user,
+        &shares,
+        &100_000_000i128,
+        &request_hash,
+        &wrong_signature,
+        &1u32, // signature_type = secp256k1
+        &0u32, // recovery_id
+    );
+}
+
+#[test]
 fn test_withdraw_with_real_signature_success() {
     println!("Starting test using real signature successful withdrawal process");
 
@@ -1000,7 +1243,7 @@ fn test_withdraw_with_real_signature_success() {
     println!();
 
     // Get verifier address set in contract
-    let withdraw_verifier = test_env.get_vault_client().get_withdraw_verifier();
+    let withdraw_verifier = test_env.get_vault_client().get_withdraw_verifier(&0u32);
     println!("Verifier address set in contract: {:?}", withdraw_verifier);
 
     // Prepare test data - first deposit
@@ -1504,7 +1747,7 @@ fn test_complete_withdraw_operation_flow() {
 
     // Step 7: Verify withdrawal configuration
     println!("=== Step 7: Verify withdrawal configuration ===");
-    let withdraw_verifier = vault_client.get_withdraw_verifier();
+    let withdraw_verifier = vault_client.get_withdraw_verifier(&0u32);
     let withdraw_fee_ratio = vault_client.get_withdraw_fee_ratio();
     let withdraw_fee_receiver = vault_client.get_withdraw_fee_receiver();
 
@@ -1854,7 +2097,10 @@ fn test_vault_initialization_with_config() {
     assert_eq!(vault_client.get_admin(), admin);
     assert_eq!(vault_client.get_oracle(), oracle);
     assert_eq!(vault_client.get_treasurer(), treasurer);
-    assert_eq!(vault_client.get_withdraw_verifier(), withdraw_verifier);
+    assert_eq!(
+        vault_client.get_withdraw_verifier(&0u32),
+        Some(withdraw_verifier.clone().into())
+    );
     assert_eq!(vault_client.get_withdraw_fee_ratio(), 150);
     assert_eq!(
         vault_client.get_eip712_domain_name(),

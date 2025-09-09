@@ -149,7 +149,7 @@ fn read_config_from_chain(env: &Env, client: &SolvBTCVaultClient) -> TestConfig 
         admin: client.get_admin(),
         oracle: client.get_oracle(),
         treasurer: client.get_treasurer(),
-        withdraw_verifier: client.get_withdraw_verifier(),
+        withdraw_verifier: BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
         withdraw_fee_ratio: client.get_withdraw_fee_ratio(),
         withdraw_fee_receiver: client.get_withdraw_fee_receiver(),
     }
@@ -248,15 +248,24 @@ fn test_withdraw_verifier_key_management() {
     let initial_verifier_pubkey = config.withdraw_verifier;
 
     // Verify initial verifier public key
-    assert_eq!(client.get_withdraw_verifier(), initial_verifier_pubkey);
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        initial_verifier_pubkey
+    );
 
     let updated_verifier_pubkey = BytesN::from_array(&env, &[5u8; 32]);
 
-    client.set_withdraw_verifier_by_admin(&updated_verifier_pubkey);
+    client.set_withdraw_verifier_by_admin(&0u32, &updated_verifier_pubkey.clone().into());
 
     // Verify verifier public key has been updated
-    assert_eq!(client.get_withdraw_verifier(), updated_verifier_pubkey);
-    assert_ne!(client.get_withdraw_verifier(), initial_verifier_pubkey);
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        updated_verifier_pubkey
+    );
+    assert_ne!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        initial_verifier_pubkey
+    );
 }
 
 #[test]
@@ -295,6 +304,8 @@ fn test_withdraw_invalid_signature_content() {
         &nav,
         &request_hash,
         &invalid_signature,
+        &0u32,
+        &0u32,
     );
 }
 
@@ -330,7 +341,10 @@ fn test_basic_initialize_success() {
     // minter_manager
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
-    assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        config.withdraw_verifier
+    );
     assert_eq!(client.get_withdraw_fee_ratio(), 100);
 }
 
@@ -351,7 +365,10 @@ fn test_initialize_with_default_config() {
     // minter_manager
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
-    assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        config.withdraw_verifier
+    );
     assert_eq!(client.get_withdraw_fee_ratio(), config.withdraw_fee_ratio);
 }
 
@@ -499,7 +516,15 @@ fn test_withdraw_with_mock_pubkey() {
     let signature = create_mock_signature(&env);
 
     // Should fail due to invalid signature (not properly signed)
-    client.withdraw(&user, &target_amount, &nav, &request_hash, &signature);
+    client.withdraw(
+        &user,
+        &target_amount,
+        &nav,
+        &request_hash,
+        &signature,
+        &0u32,
+        &0u32,
+    );
 }
 
 // ==================== Basic Tests ====================
@@ -960,7 +985,7 @@ fn test_withdraw_success_various_fee_ratios() {
     // Set verifier
     let (sk, vk) = fixed_keypair();
     let verifier_public_key = public_key_from_verifying_key(&env, &vk);
-    client.set_withdraw_verifier_by_admin(&verifier_public_key);
+    client.set_withdraw_verifier_by_admin(&0u32, &verifier_public_key.clone().into());
 
     // Try a few fee ratios
     for fee in [300i128, 1000i128] {
@@ -980,14 +1005,26 @@ fn test_withdraw_success_various_fee_ratios() {
         eip712.append(&client.get_eip712_domain_separator());
         eip712.append(&msg_hash);
 
+        // Ed25519 requires an additional sha256 hash on the eip712 message
+        let digest = env.crypto().sha256(&eip712);
+        let digest_bytes: Bytes = digest.into();
+
         let mut buf = heapless::Vec::<u8, 1024>::new();
-        for i in 0..eip712.len() {
-            buf.push(eip712.get(i).unwrap()).ok();
+        for i in 0..digest_bytes.len() {
+            buf.push(digest_bytes.get(i).unwrap()).ok();
         }
         let sig = sk.sign(&buf);
         let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
 
-        let out = client.withdraw(&user, &shares, &nav, &request_hash, &sig_bytes);
+        let out = client.withdraw(
+            &user,
+            &shares,
+            &nav,
+            &request_hash,
+            &sig_bytes,
+            &0u32,
+            &0u32,
+        );
         assert!(out >= 0);
     }
 }
@@ -1002,7 +1039,7 @@ fn test_withdraw_success_precision_scenarios() {
     // Verifier
     let (sk, vk) = fixed_keypair();
     let verifier_public_key = public_key_from_verifying_key(&env, &vk);
-    client.set_withdraw_verifier_by_admin(&verifier_public_key);
+    client.set_withdraw_verifier_by_admin(&0u32, &verifier_public_key.clone().into());
 
     // Use 5% fee
     client.set_withdraw_fee_ratio_by_admin(&500);
@@ -1021,14 +1058,26 @@ fn test_withdraw_success_precision_scenarios() {
         eip712.append(&client.get_eip712_domain_separator());
         eip712.append(&msg_hash);
 
+        // Ed25519 requires an additional sha256 hash on the eip712 message
+        let digest = env.crypto().sha256(&eip712);
+        let digest_bytes: Bytes = digest.into();
+
         let mut buf = heapless::Vec::<u8, 1024>::new();
-        for i in 0..eip712.len() {
-            buf.push(eip712.get(i).unwrap()).ok();
+        for i in 0..digest_bytes.len() {
+            buf.push(digest_bytes.get(i).unwrap()).ok();
         }
         let sig = sk.sign(&buf);
         let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
 
-        let out = client.withdraw(&user, &shares, &nav, &request_hash, &sig_bytes);
+        let out = client.withdraw(
+            &user,
+            &shares,
+            &nav,
+            &request_hash,
+            &sig_bytes,
+            &0u32,
+            &0u32,
+        );
         assert!(out > 0);
     }
 }
@@ -1097,7 +1146,7 @@ fn test_withdraw_success_end_to_end() {
     // Set verifier matching our verifying key
     let (sk, vk) = fixed_keypair();
     let verifier_public_key = public_key_from_verifying_key(&env, &vk);
-    client.set_withdraw_verifier_by_admin(&verifier_public_key);
+    client.set_withdraw_verifier_by_admin(&0u32, &verifier_public_key.clone().into());
 
     // Prepare withdraw request
     let user = Address::generate(&env);
@@ -1114,16 +1163,28 @@ fn test_withdraw_success_end_to_end() {
     eip712.append(&client.get_eip712_domain_separator());
     eip712.append(&msg_hash);
 
+    // Ed25519 requires an additional sha256 hash on the eip712 message
+    let digest = env.crypto().sha256(&eip712);
+    let digest_bytes: Bytes = digest.into();
+
     // Sign
     let mut buf = heapless::Vec::<u8, 1024>::new();
-    for i in 0..eip712.len() {
-        buf.push(eip712.get(i).unwrap()).ok();
+    for i in 0..digest_bytes.len() {
+        buf.push(digest_bytes.get(i).unwrap()).ok();
     }
     let sig = sk.sign(&buf);
     let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
 
     // Execute withdraw
-    let actual = client.withdraw(&user, &shares, &nav, &request_hash, &sig_bytes);
+    let actual = client.withdraw(
+        &user,
+        &shares,
+        &nav,
+        &request_hash,
+        &sig_bytes,
+        &0u32,
+        &0u32,
+    );
     assert!(actual > 0);
 }
 #[test]
@@ -1480,7 +1541,10 @@ fn test_system_management_traits() {
     let config = initialize_vault_with_defaults(&env, &client);
 
     // Test all getter functions
-    assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        config.withdraw_verifier
+    );
     assert_eq!(client.get_treasurer(), config.treasurer);
     assert_eq!(client.get_oracle(), config.oracle);
 }
@@ -1673,14 +1737,17 @@ fn test_complete_system_management() {
     // Set new addresses
     client.set_oracle_by_admin(&new_oracle);
     client.set_treasurer_by_admin(&new_treasurer);
-    client.set_withdraw_verifier_by_admin(&new_verifier);
+    client.set_withdraw_verifier_by_admin(&0u32, &new_verifier.clone().into());
     client.set_withdraw_fee_recv_by_admin(&new_fee_receiver);
     client.set_withdraw_fee_ratio_by_admin(&250);
 
     // Verify all were set correctly
     assert_eq!(client.get_oracle(), new_oracle);
     assert_eq!(client.get_treasurer(), new_treasurer);
-    assert_eq!(client.get_withdraw_verifier(), new_verifier);
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        new_verifier
+    );
     assert_eq!(client.get_withdraw_fee_receiver(), new_fee_receiver);
     assert_eq!(client.get_withdraw_fee_ratio(), 250);
 }
@@ -1928,7 +1995,15 @@ fn test_withdraw_invalid_request_status() {
     // Call and expect InvalidRequestStatus (#27)
     #[allow(unused_must_use)]
     {
-        client.withdraw(&user, &1000, &nav, &request_hash, &mock_signature);
+        client.withdraw(
+            &user,
+            &1000,
+            &nav,
+            &request_hash,
+            &mock_signature,
+            &0u32,
+            &0u32,
+        );
     }
 }
 
@@ -1962,7 +2037,7 @@ fn test_withdraw_with_zero_withdraw_fee_ratio_should_panic() {
     let request_hash = create_request_hash(&env, 778);
     let dummy_sig = BytesN::<64>::from_array(&env, &[0u8; 64]);
     // Should panic due to invalid request status
-    client.withdraw(&user, &1000, &nav, &request_hash, &dummy_sig);
+    client.withdraw(&user, &1000, &nav, &request_hash, &dummy_sig, &0u32, &0u32);
 }
 
 /// Test withdraw with invalid amount (shares == 0)
@@ -1979,7 +2054,15 @@ fn test_withdraw_invalid_amount_zero() {
 
     let shares = 0i128;
     let nav = 100_000_000i128;
-    client.withdraw(&user, &shares, &nav, &request_hash, &signature);
+    client.withdraw(
+        &user,
+        &shares,
+        &nav,
+        &request_hash,
+        &signature,
+        &0u32,
+        &0u32,
+    );
 }
 
 /// Test withdraw with invalid NAV (nav == 0)
@@ -1996,7 +2079,15 @@ fn test_withdraw_invalid_nav_zero() {
 
     let shares = 1i128;
     let nav = 0i128;
-    client.withdraw(&user, &shares, &nav, &request_hash, &signature);
+    client.withdraw(
+        &user,
+        &shares,
+        &nav,
+        &request_hash,
+        &signature,
+        &0u32,
+        &0u32,
+    );
 }
 
 /// Test treasurer deposit with comprehensive validation
@@ -2166,7 +2257,10 @@ fn test_vault_query_functions_comprehensive() {
     assert_eq!(client.get_admin(), config.admin);
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
-    assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        config.withdraw_verifier
+    );
     assert_eq!(client.get_withdraw_fee_ratio(), config.withdraw_fee_ratio);
     assert_eq!(
         client.get_withdraw_fee_receiver(),
@@ -2223,7 +2317,10 @@ fn test_error_conditions_comprehensive() {
     // Test various query functions work after initialization
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
-    assert_eq!(client.get_withdraw_verifier(), config.withdraw_verifier);
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        config.withdraw_verifier
+    );
 
     // Withdraw currency should be set by constructor
     let withdraw_currency = client.get_withdraw_currency();
@@ -2241,12 +2338,21 @@ fn test_signature_verification_edge_cases() {
 
     // Test verifier key management
     let new_verifier = BytesN::from_array(&env, &[4u8; 32]);
-    client.set_withdraw_verifier_by_admin(&new_verifier);
-    assert_eq!(client.get_withdraw_verifier(), new_verifier);
+    client.set_withdraw_verifier_by_admin(&0u32, &new_verifier.clone().into());
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        new_verifier
+    );
 
     // Test getting withdraw verifier multiple times
-    assert_eq!(client.get_withdraw_verifier(), new_verifier);
-    assert_eq!(client.get_withdraw_verifier(), new_verifier);
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        new_verifier
+    );
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        new_verifier
+    );
 }
 
 /// Test EIP712 domain and chain operations
@@ -2302,8 +2408,11 @@ fn test_system_configuration_management() {
     assert_eq!(client.get_treasurer(), new_treasurer);
 
     let new_verifier = BytesN::from_array(&env, &[4u8; 32]);
-    client.set_withdraw_verifier_by_admin(&new_verifier);
-    assert_eq!(client.get_withdraw_verifier(), new_verifier);
+    client.set_withdraw_verifier_by_admin(&0u32, &new_verifier.clone().into());
+    assert_eq!(
+        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        new_verifier
+    );
 
     // Test fee management
     client.set_withdraw_fee_ratio_by_admin(&200);
@@ -2676,4 +2785,333 @@ fn test_deposit_with_zero_fee_ratio() {
 
     // Deposit should work with 0 fee (user gets full amount after fee = amount)
     // In real scenario, this would calculate shares correctly with 0 fee
+}
+
+/// Test unified withdraw with Ed25519 signature (type = 0)
+#[test]
+fn test_unified_withdraw_ed25519() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
+
+    // Set Ed25519 verifier
+    let (sk, vk) = fixed_keypair();
+    let verifier_public_key = public_key_from_verifying_key(&env, &vk);
+    // Use signature_type = 0 for Ed25519
+    client.set_withdraw_verifier_by_admin(&0u32, &verifier_public_key.clone().into());
+
+    // Prepare withdraw request
+    let user = Address::generate(&env);
+    let shares = 50_000_000i128;
+    let nav = 100_000_000i128;
+    let request_hash = create_request_hash(&env, 42);
+    client.withdraw_request(&user, &shares, &request_hash);
+
+    // Build message and sign with Ed25519
+    let msg = build_withdraw_message(&env, &user, shares, &token_addr, nav, &request_hash);
+    let msg_hash: Bytes = env.crypto().sha256(&msg).into();
+    let mut eip712 = Bytes::new(&env);
+    eip712.append(&Bytes::from_slice(&env, &[0x19, 0x01]));
+    eip712.append(&client.get_eip712_domain_separator());
+    eip712.append(&msg_hash);
+
+    // Ed25519 requires an additional sha256 hash on the eip712 message
+    let digest = env.crypto().sha256(&eip712);
+    let digest_bytes: Bytes = digest.into();
+
+    let mut buf = heapless::Vec::<u8, 1024>::new();
+    for i in 0..digest_bytes.len() {
+        buf.push(digest_bytes.get(i).unwrap()).ok();
+    }
+    let sig = sk.sign(&buf);
+    let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
+
+    // Execute withdraw with signature_type = 0 (Ed25519)
+    let actual = client.withdraw(
+        &user,
+        &shares,
+        &nav,
+        &request_hash,
+        &sig_bytes,
+        &0u32, // signature_type = Ed25519
+        &0u32, // recovery_id (ignored for Ed25519)
+    );
+    assert!(actual > 0);
+}
+
+/// Test unified withdraw with Secp256k1 signature (type = 1)
+#[test]
+fn test_unified_withdraw_secp256k1_interface() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, _) = create_vault_with_mocks(&env);
+
+    // Set Secp256k1 verifier (65-byte uncompressed public key)
+    let mut pubkey_bytes = [0u8; 65];
+    pubkey_bytes[0] = 0x04; // Uncompressed public key prefix
+    for i in 1..65 {
+        pubkey_bytes[i] = i as u8;
+    }
+    let verifier_public_key = Bytes::from_slice(&env, &pubkey_bytes);
+    // Use signature_type = 1 for Secp256k1
+    client.set_withdraw_verifier_by_admin(&1u32, &verifier_public_key);
+
+    // Verify the verifier was set correctly
+    let stored_verifier = client.get_withdraw_verifier(&1u32).unwrap();
+    assert_eq!(stored_verifier.len(), 65);
+    assert_eq!(stored_verifier.get(0).unwrap(), 0x04);
+}
+
+/// Exercise secp256k1 verification branch with invalid signature (should panic)
+#[test]
+#[should_panic]
+fn test_withdraw_secp256k1_invalid_signature_should_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, _) = create_vault_with_mocks(&env);
+
+    // Configure a 65-byte uncompressed secp256k1 public key
+    let mut pubkey_bytes = [0u8; 65];
+    pubkey_bytes[0] = 0x04;
+    for i in 1..65 {
+        pubkey_bytes[i] = (i as u8);
+    }
+    let verifier_public_key = Bytes::from_slice(&env, &pubkey_bytes);
+    client.set_withdraw_verifier_by_admin(&1u32, &verifier_public_key);
+
+    // Prepare a withdraw request first
+    let user = Address::generate(&env);
+    let shares = 50_000_000i128;
+    let nav = 100_000_000i128;
+    let request_hash = create_request_hash(&env, 7);
+    client.withdraw_request(&user, &shares, &request_hash);
+
+    // Invalid signature (all zeros) and a dummy recovery id
+    let sig_bytes = BytesN::<64>::from_array(&env, &[0u8; 64]);
+
+    // Call withdraw with signature_type = 1 (secp256k1) -> should panic inside secp recover/compare
+    client.withdraw(
+        &user,
+        &shares,
+        &nav,
+        &request_hash,
+        &sig_bytes,
+        &1u32, // secp256k1
+        &0u32, // recovery id
+    );
+}
+
+/// Test invalid signature type handling
+#[test]
+#[should_panic]
+fn test_unified_withdraw_invalid_signature_type() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, _) = create_vault_with_mocks(&env);
+
+    let user = Address::generate(&env);
+    let shares = 50_000_000i128;
+    let nav = 100_000_000i128;
+    let request_hash = create_request_hash(&env, 42);
+
+    // Prepare request first
+    client.withdraw_request(&user, &shares, &request_hash);
+
+    // Mock signature
+    let sig_bytes = BytesN::<64>::from_array(&env, &[0u8; 64]);
+
+    // Try with invalid signature type (e.g., 99)
+    let invalid_type = 99u32;
+
+    // This should panic
+    client.withdraw(
+        &user,
+        &shares,
+        &nav,
+        &request_hash,
+        &sig_bytes,
+        &invalid_type,
+        &0u32,
+    );
+}
+
+/// Test get_withdraw_verifier returns None for unset verifier
+#[test]
+fn test_get_withdraw_verifier_not_set() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, _) = create_vault_with_mocks(&env);
+
+    // Type 0 (Ed25519) should be set from constructor
+    let ed25519_verifier = client.get_withdraw_verifier(&0u32);
+    assert!(ed25519_verifier.is_some(), "Ed25519 verifier should be set from constructor");
+
+    // Type 1 (Secp256k1) should NOT be set
+    let secp256k1_verifier = client.get_withdraw_verifier(&1u32);
+    assert!(secp256k1_verifier.is_none(), "Secp256k1 verifier should return None when not set");
+
+    // Type 99 (invalid) should also return None
+    let invalid_verifier = client.get_withdraw_verifier(&99u32);
+    assert!(invalid_verifier.is_none(), "Invalid signature type should return None");
+}
+
+/// Test withdraw fails with WithdrawVerifierNotSet error when verifier not set
+#[test]
+#[should_panic(expected = "Error(Contract, #315)")]
+fn test_withdraw_with_unset_verifier_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, _) = create_vault_with_mocks(&env);
+    
+    // Setup
+    let user = Address::generate(&env);
+    let shares = 50_000_000i128;
+    let nav = 100_000_000i128;
+
+    // Create withdraw request
+    let request_hash = create_request_hash(&env, 99);
+    client.withdraw_request(&user, &shares, &request_hash);
+
+    // Create Secp256k1 signature (64 bytes, but verifier not set)
+    let sig_bytes = BytesN::<64>::from_array(&env, &[0u8; 64]);
+
+    // Try to withdraw with Secp256k1 (type 1) when verifier not set
+    // This should panic with WithdrawVerifierNotSet
+    client.withdraw(
+        &user,
+        &shares,
+        &nav,
+        &request_hash,
+        &sig_bytes,
+        &1u32, // Secp256k1 - not set!
+        &0u32,
+    );
+}
+
+/// Test setting verifiers for different signature types
+#[test]
+fn test_set_multiple_verifier_types() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+    let config = initialize_vault_with_defaults(&env, &client);
+
+    // Set Ed25519 verifier (32 bytes)
+    let ed25519_key = BytesN::<32>::from_array(&env, &[1u8; 32]);
+    client.set_withdraw_verifier_by_admin(&0u32, &ed25519_key.clone().into());
+
+    // Set Secp256k1 verifier (65 bytes)
+    let mut secp256k1_key_bytes = [0u8; 65];
+    secp256k1_key_bytes[0] = 0x04; // Uncompressed prefix
+    for i in 1..65 {
+        secp256k1_key_bytes[i] = (i * 2) as u8;
+    }
+    let secp256k1_key = Bytes::from_slice(&env, &secp256k1_key_bytes);
+    client.set_withdraw_verifier_by_admin(&1u32, &secp256k1_key);
+
+    // Verify both are stored correctly
+    let stored_ed25519 = client.get_withdraw_verifier(&0u32).unwrap();
+    assert_eq!(stored_ed25519.len(), 32);
+    assert_eq!(stored_ed25519.get(0).unwrap(), 1);
+
+    let stored_secp256k1 = client.get_withdraw_verifier(&1u32).unwrap();
+    assert_eq!(stored_secp256k1.len(), 65);
+    assert_eq!(stored_secp256k1.get(0).unwrap(), 0x04);
+}
+
+/// Test that different signature types don't overwrite each other
+#[test]
+fn test_verifier_types_coexist() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+    let config = initialize_vault_with_defaults(&env, &client);
+
+    // Set both verifier types with distinct values
+    let ed25519_key = BytesN::<32>::from_array(&env, &[0xEDu8; 32]);
+    client.set_withdraw_verifier_by_admin(&0u32, &ed25519_key.clone().into());
+
+    let mut secp_bytes = [0x00u8; 65];
+    secp_bytes[0] = 0x04;
+    for i in 1..65 {
+        secp_bytes[i] = 0xEC;
+    }
+    let secp256k1_key = Bytes::from_slice(&env, &secp_bytes);
+    client.set_withdraw_verifier_by_admin(&1u32, &secp256k1_key);
+
+    // Verify they don't overwrite each other
+    let stored_ed25519 = client.get_withdraw_verifier(&0u32).unwrap();
+    assert_eq!(stored_ed25519.get(0).unwrap(), 0xED);
+    assert_eq!(stored_ed25519.len(), 32);
+
+    let stored_secp256k1 = client.get_withdraw_verifier(&1u32).unwrap();
+    assert_eq!(stored_secp256k1.get(0).unwrap(), 0x04);
+    assert_eq!(stored_secp256k1.get(1).unwrap(), 0xEC);
+    assert_eq!(stored_secp256k1.len(), 65);
+}
+
+/// Test Ed25519 ignores recovery_id parameter
+#[test]
+fn test_ed25519_ignores_recovery_id() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, token_addr, _, _) = create_vault_with_mocks(&env);
+
+    // Set Ed25519 verifier
+    let (sk, vk) = fixed_keypair();
+    let verifier_public_key = public_key_from_verifying_key(&env, &vk);
+    client.set_withdraw_verifier_by_admin(&0u32, &verifier_public_key.clone().into());
+
+    let user = Address::generate(&env);
+    let shares = 50_000_000i128;
+    let nav = 100_000_000i128;
+
+    // Test with different recovery_id values - all should work for Ed25519
+    for test_recovery_id in [0u32, 1u32, 2u32, 3u32, 99u32].iter() {
+        let request_hash = create_request_hash(&env, 100 + *test_recovery_id as u64);
+        client.withdraw_request(&user, &shares, &request_hash);
+
+        // Build and sign message
+        let msg = build_withdraw_message(&env, &user, shares, &token_addr, nav, &request_hash);
+        let msg_hash: Bytes = env.crypto().sha256(&msg).into();
+        let mut eip712 = Bytes::new(&env);
+        eip712.append(&Bytes::from_slice(&env, &[0x19, 0x01]));
+        eip712.append(&client.get_eip712_domain_separator());
+        eip712.append(&msg_hash);
+
+        // Ed25519 requires an additional sha256 hash on the eip712 message
+        let digest = env.crypto().sha256(&eip712);
+        let digest_bytes: Bytes = digest.into();
+
+        let mut buf = heapless::Vec::<u8, 1024>::new();
+        for i in 0..digest_bytes.len() {
+            buf.push(digest_bytes.get(i).unwrap()).ok();
+        }
+        let sig = sk.sign(&buf);
+        let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
+
+        let actual = client.withdraw(
+            &user,
+            &shares,
+            &nav,
+            &request_hash,
+            &sig_bytes,
+            &0u32,            // Ed25519
+            test_recovery_id, // Should be ignored
+        );
+        assert!(
+            actual > 0,
+            "Ed25519 should work with recovery_id={}",
+            test_recovery_id
+        );
+    }
 }
