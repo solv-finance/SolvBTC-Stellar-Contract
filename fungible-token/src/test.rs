@@ -1691,3 +1691,143 @@ fn test_non_minter_manager_cannot_add_minter() {
     }]);
     client.add_minter_by_manager(&new_minter);
 }
+
+#[test]
+#[should_panic]
+fn test_burn_from_with_blacklisted_spender_should_panic() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let user = Address::generate(&env);
+    let spender = Address::generate(&env);
+    let client = create_and_init_token(&env, &owner, "TEST", "TST", 7);
+
+    // Add and blacklist spender
+    env.mock_auths(&[MockAuth {
+        address: &owner,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "add_to_blacklist",
+            args: (&owner, &spender).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.add_to_blacklist(&owner, &spender);
+
+    // Mint tokens to user
+    let minter = Address::generate(&env);
+    env.mock_auths(&[MockAuth {
+        address: &owner,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "add_minter_by_manager",
+            args: (&minter,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.add_minter_by_manager(&minter);
+
+    env.mock_auths(&[MockAuth {
+        address: &minter,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "mint_from",
+            args: (&minter, &user, &100i128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.mint_from(&minter, &user, &100);
+
+    // User approves blacklisted spender
+    env.mock_auths(&[MockAuth {
+        address: &user,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "approve",
+            args: (&user, &spender, &50i128, &200u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.approve(&user, &spender, &50, &200);
+
+    // Blacklisted spender tries to burn - should panic
+    env.mock_auths(&[MockAuth {
+        address: &spender,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "burn_from",
+            args: (&spender, &user, &25i128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.burn_from(&spender, &user, &25);
+}
+
+#[test]
+#[should_panic]
+fn test_burn_from_with_blacklisted_from_should_panic() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let user = Address::generate(&env);
+    let spender = Address::generate(&env);
+    let client = create_and_init_token(&env, &owner, "TEST", "TST", 7);
+
+    // Add and blacklist user (from address)
+    env.mock_auths(&[MockAuth {
+        address: &owner,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "add_to_blacklist",
+            args: (&owner, &user).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.add_to_blacklist(&owner, &user);
+
+    // Mint tokens to blacklisted user
+    let minter = Address::generate(&env);
+    env.mock_auths(&[MockAuth {
+        address: &owner,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "add_minter_by_manager",
+            args: (&minter,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.add_minter_by_manager(&minter);
+
+    env.mock_auths(&[MockAuth {
+        address: &minter,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "mint_from",
+            args: (&minter, &user, &100i128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.mint_from(&minter, &user, &100);
+
+    // Blacklisted user approves spender (this should already fail, but let's assume it was done before blacklisting)
+    env.mock_auths(&[MockAuth {
+        address: &user,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "approve",
+            args: (&user, &spender, &50i128, &200u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.approve(&user, &spender, &50, &200);
+
+    // Spender tries to burn from blacklisted user - should panic
+    env.mock_auths(&[MockAuth {
+        address: &spender,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "burn_from",
+            args: (&spender, &user, &25i128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.burn_from(&spender, &user, &25);
+}
