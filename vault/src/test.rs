@@ -3115,3 +3115,85 @@ fn test_ed25519_ignores_recovery_id() {
         );
     }
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #314)")] // InvalidSignatureType
+fn test_set_withdraw_verifier_invalid_signature_type() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+    let _ = initialize_vault_with_defaults(&env, &client);
+
+    // Try to set verifier with invalid signature type (not 0 or 1)
+    let verifier_key = Bytes::from_array(&env, &[1u8; 32]);
+    client.set_withdraw_verifier_by_admin(&999u32, &verifier_key);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #316)")] // InvalidVerifierKey
+fn test_set_withdraw_verifier_ed25519_wrong_length() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+    let _ = initialize_vault_with_defaults(&env, &client);
+
+    // Ed25519 key with wrong length (should be 32 bytes, not 31)
+    let verifier_key = Bytes::from_array(&env, &[1u8; 31]);
+    client.set_withdraw_verifier_by_admin(&0u32, &verifier_key);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #316)")] // InvalidVerifierKey
+fn test_set_withdraw_verifier_secp256k1_wrong_length() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+    let _ = initialize_vault_with_defaults(&env, &client);
+
+    // Secp256k1 key with wrong length (should be 65 bytes, not 64)
+    let verifier_key = Bytes::from_array(&env, &[4u8; 64]);
+    client.set_withdraw_verifier_by_admin(&1u32, &verifier_key);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #316)")] // InvalidVerifierKey
+fn test_set_withdraw_verifier_secp256k1_wrong_prefix() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+    let _ = initialize_vault_with_defaults(&env, &client);
+
+    // Secp256k1 key with wrong prefix (should be 0x04, not 0x03)
+    let mut verifier_key_bytes = [0u8; 65];
+    verifier_key_bytes[0] = 0x03; // Wrong prefix for uncompressed key
+    let verifier_key = Bytes::from_array(&env, &verifier_key_bytes);
+    client.set_withdraw_verifier_by_admin(&1u32, &verifier_key);
+}
+
+#[test]
+fn test_set_withdraw_verifier_valid_keys() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+    let _ = initialize_vault_with_defaults(&env, &client);
+
+    // Test valid Ed25519 key (32 bytes)
+    let ed25519_key = Bytes::from_array(&env, &[2u8; 32]);
+    client.set_withdraw_verifier_by_admin(&0u32, &ed25519_key);
+    assert_eq!(client.get_withdraw_verifier(&0u32), Some(ed25519_key));
+
+    // Test valid Secp256k1 key (65 bytes with 0x04 prefix)
+    let mut secp256k1_key_bytes = [0u8; 65];
+    secp256k1_key_bytes[0] = 0x04; // Correct prefix for uncompressed key
+    for i in 1..65 {
+        secp256k1_key_bytes[i] = (i % 256) as u8;
+    }
+    let secp256k1_key = Bytes::from_array(&env, &secp256k1_key_bytes);
+    client.set_withdraw_verifier_by_admin(&1u32, &secp256k1_key);
+    assert_eq!(client.get_withdraw_verifier(&1u32), Some(secp256k1_key));
+}
