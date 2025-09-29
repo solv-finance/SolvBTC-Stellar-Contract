@@ -167,6 +167,8 @@ impl FungibleToken for FungibleTokenContract {
 impl FungibleBurnable for FungibleTokenContract {
     #[when_not_paused]
     fn burn(env: &Env, from: Address, amount: i128) {
+        // Check blacklist
+        Self::require_not_blacklisted(env, &from);
         // SEP-41 standard: user can burn their own tokens
         Base::burn(env, &from, amount);
     }
