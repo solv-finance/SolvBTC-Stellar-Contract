@@ -125,6 +125,8 @@ pub enum VaultError {
     InvalidSignatureType = 314,
     /// Withdraw verifier not set
     WithdrawVerifierNotSet = 315,
+    /// Invalid decimals configuration
+    InvalidDecimals = 316,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -160,6 +162,12 @@ impl SolvBTCVault {
         if withdraw_fee_ratio < 0 || withdraw_fee_ratio > FEE_PRECISION {
             panic_with_error!(env, VaultError::InvalidWithdrawFeeRatio);
         }
+
+        // Early validate decimals configuration to prevent unsafe exponentiation/overflow
+        let shares_decimals = TokenClient::new(env, &token_contract).decimals();
+        let withdraw_decimals = TokenClient::new(env, &withdraw_currency).decimals();
+        let nav_decimals = OracleClient::new(env, &oracle).get_nav_decimals();
+        Self::validate_decimals_config(env, shares_decimals, withdraw_decimals, nav_decimals);
 
         // Set contract owner using OpenZeppelin Ownable
         ownable::set_owner(env, &admin);
@@ -224,12 +232,20 @@ impl VaultOperations for SolvBTCVault {
         // Get deposit fee ratio (can be 0 for no fee)
         let deposit_fee_ratio = Self::get_deposit_fee_ratio_internal(&env);
 
-        // Calculate fee: fee = amount * depositFeeRatio / 10000
-        let fee = (amount * deposit_fee_ratio) / FEE_PRECISION;
-        let amount_after_fee = amount - fee;
+        // Calculate fee: fee = amount * depositFeeRatio / 10000 (checked arithmetic)
+        let fee = amount
+            .checked_mul(deposit_fee_ratio)
+            .and_then(|x| x.checked_div(FEE_PRECISION))
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount));
+        let amount_after_fee = amount
+            .checked_sub(fee)
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount));
 
         // Get NAV value
         let nav = Self::get_nav_from_oracle(&env);
+        if nav <= 0 {
+            panic_with_error!(env, VaultError::InvalidNav);
+        }
         // Get treasurer address
         let treasurer = Self::get_treasurer_internal(&env);
         // Get currency decimals
@@ -470,9 +486,14 @@ impl VaultOperations for SolvBTCVault {
             Self::get_nav_decimals_from_oracle(&env),
         );
 
-        // Calculate fee: fee = amount * withdrawFeeRatio / 10000
-        let fee = (amount * withdraw_fee_ratio) / FEE_PRECISION;
-        let amount_after_fee = amount - fee;
+        // Calculate fee: fee = amount * withdrawFeeRatio / 10000 (checked arithmetic)
+        let fee = amount
+            .checked_mul(withdraw_fee_ratio)
+            .and_then(|x| x.checked_div(FEE_PRECISION))
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount));
+        let amount_after_fee = amount
+            .checked_sub(fee)
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount));
 
         // Set withdraw request status to DONE
         env.storage()
@@ -567,6 +588,12 @@ impl CurrencyManagement for SolvBTCVault {
         if currencies.contains_key(currency.clone()) {
             panic_with_error!(env, VaultError::CurrencyAlreadyExists);
         }
+
+        // Validate decimals compatibility with current configuration before adding
+        let new_currency_decimals = TokenClient::new(&env, &currency).decimals();
+        let shares_decimals = Self::get_shares_token_decimals(&env);
+        let nav_decimals = Self::get_nav_decimals_from_oracle(&env);
+        Self::validate_decimals_config(&env, shares_decimals, new_currency_decimals, nav_decimals);
 
         // Add currency
         currencies.set(currency.clone(), true);
@@ -672,6 +699,11 @@ impl SystemManagement for SolvBTCVault {
 
     #[only_owner]
     fn set_oracle_by_admin(env: Env, oracle: Address) {
+        // Validate decimals compatibility with the new oracle before updating
+        let nav_decimals = OracleClient::new(&env, &oracle).get_nav_decimals();
+        let shares_decimals = Self::get_shares_token_decimals(&env);
+        let withdraw_decimals = Self::get_withdraw_token_decimals(&env);
+        Self::validate_decimals_config(&env, shares_decimals, withdraw_decimals, nav_decimals);
         env.storage().instance().set(&DataKey::Oracle, &oracle);
 
         // Publish event
@@ -1012,6 +1044,17 @@ impl SolvBTCVault {
         TokenClient::new(env, &withdraw_token).decimals()
     }
 
+    /// Validate decimals configuration: each ≤ 18 and total ≤ 38
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn validate_decimals_config(env: &Env, decimals_a: u32, decimals_b: u32, decimals_c: u32) {
+        if decimals_a > 18 || decimals_b > 18 || decimals_c > 18 {
+            panic_with_error!(env, VaultError::InvalidDecimals);
+        }
+        if (decimals_a + decimals_b + decimals_c) > 38 {
+            panic_with_error!(env, VaultError::InvalidDecimals);
+        }
+    }
+
     /// Transfer from user
     fn transfer_from_user(env: &Env, token: &Address, from: &Address, to: &Address, amount: i128) {
         // Call token contract's transfer_from method
@@ -1030,7 +1073,8 @@ impl SolvBTCVault {
     }
 
     // Calculate mint amount for user after user Deposit
-    fn calculate_mint_amount(
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn calculate_mint_amount(
         env: &Env,
         deposit_amount: i128,
         nav: i128,
@@ -1039,30 +1083,43 @@ impl SolvBTCVault {
         nav_decimals: u32,
     ) -> i128 {
         // shares = amount * (10^shares_decimals) * (10^nav_decimals) / (nav * (10^currency_decimals))
-        let shares_precision = 10_i128.pow(shares_decimals);
-        let nav_precision = 10_i128.pow(nav_decimals);
-        let currency_precision = 10_i128.pow(currency_decimals);
+        // Validate decimals configuration
+        Self::validate_decimals_config(env, shares_decimals, currency_decimals, nav_decimals);
 
-        // Numerator: deposit_amount * shares_precision * nav_precision
-        let numerator = deposit_amount
-            .checked_mul(shares_precision)
-            .and_then(|x| x.checked_mul(nav_precision))
-            .unwrap_or_else(|| {
-                panic_with_error!(env, VaultError::InvalidAmount);
-            });
+        // Factor out common power-of-10 to reduce intermediate values
+        // c = min(shares_decimals, currency_decimals)
+        // amount' = amount * 10^(shares_decimals - c) / 10^(currency_decimals - c)
+        // shares = amount' * 10^nav_decimals / nav
 
-        // Denominator: nav * currency_precision
-        let denominator = nav.checked_mul(currency_precision).unwrap_or_else(|| {
-            panic_with_error!(env, VaultError::InvalidAmount);
-        });
-
-        // Check for division by zero
-        if denominator == 0 {
-            panic_with_error!(env, VaultError::InvalidAmount);
+        // Validate NAV before calculation
+        if nav <= 0 {
+            panic_with_error!(env, VaultError::InvalidNav);
         }
 
-        // Return result
-        numerator / denominator
+        let common_factor = shares_decimals.min(currency_decimals);
+        let nav_scale = 10_i128.pow(nav_decimals);
+
+        // Step 1: scale amount by 10^(shares_decimals - common_factor) / 10^(currency_decimals - common_factor)
+        let scaled_amount = if shares_decimals >= currency_decimals {
+            let scale = 10_i128.pow(shares_decimals - common_factor);
+            deposit_amount
+                .checked_mul(scale)
+                .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount))
+        } else {
+            let scale = 10_i128.pow(currency_decimals - common_factor);
+            deposit_amount
+                .checked_div(scale)
+                .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount))
+        };
+
+        // Step 2: multiply by nav_scale and divide by nav (checked)
+
+        let minted = scaled_amount
+            .checked_mul(nav_scale)
+            .and_then(|x| x.checked_div(nav))
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount));
+
+        minted
     }
 
     /// Get token contract address
@@ -1117,7 +1174,9 @@ impl SolvBTCVault {
     }
 
     /// Calculate withdrawal amount based on shares, nav and decimals
-    fn calculate_withdraw_amount(
+    /// Uses optimized calculation to avoid overflow
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn calculate_withdraw_amount(
         env: &Env,
         shares: i128,
         nav: i128,
@@ -1125,10 +1184,46 @@ impl SolvBTCVault {
         withdraw_token_decimals: u32,
         nav_decimals: u32,
     ) -> i128 {
-        let shares_precision = 10_i128.pow(shares_token_decimals);
-        let nav_precision = 10_i128.pow(nav_decimals);
-        let withdraw_precision = 10_i128.pow(withdraw_token_decimals);
-        (shares * nav * withdraw_precision) / (nav_precision * shares_precision)
+        // Validate decimals configuration
+        Self::validate_decimals_config(
+            env,
+            shares_token_decimals,
+            withdraw_token_decimals,
+            nav_decimals,
+        );
+
+        // Validate NAV before calculation
+        if nav <= 0 {
+            panic_with_error!(env, VaultError::InvalidNav);
+        }
+
+        // Optimize calculation by extracting common factor to reduce intermediate values
+        // Formula: amount = (shares * nav * 10^withdraw_decimals) / (10^nav_decimals * 10^shares_decimals)
+        // Optimized: reduce common factors first
+
+        let common_factor = shares_token_decimals.min(withdraw_token_decimals);
+        let nav_scale = 10_i128.pow(nav_decimals);
+
+        // Step 1: Scale shares by 10^(withdraw_decimals - common_factor) / 10^(shares_decimals - common_factor)
+        let scaled_shares = if withdraw_token_decimals >= shares_token_decimals {
+            let scale = 10_i128.pow(withdraw_token_decimals - common_factor);
+            shares
+                .checked_mul(scale)
+                .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount))
+        } else {
+            let scale = 10_i128.pow(shares_token_decimals - common_factor);
+            shares
+                .checked_div(scale)
+                .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount))
+        };
+
+        // Step 2: Multiply by nav and divide by nav_scale
+        let amount = scaled_shares
+            .checked_mul(nav)
+            .and_then(|x| x.checked_div(nav_scale))
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount));
+
+        amount
     }
 }
 

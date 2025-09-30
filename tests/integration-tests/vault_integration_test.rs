@@ -2067,14 +2067,15 @@ fn test_vault_initialization_with_config() {
 
     // Create test addresses
     let admin = Address::generate(&env);
-    let token_contract = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let (token_contract, _) = create_fungible_token(&env, &admin, "SolvBTC", "SOLVBTC", 8);
+    let (oracle, _) = create_oracle(&env, false);
     let treasurer = Address::generate(&env);
     let mut verifier_bytes = [0u8; 32];
     verifier_bytes[0] = 0xDE;
     verifier_bytes[1] = 0xAD;
     let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
     let fee_receiver = Address::generate(&env);
+    let (withdraw_currency, _) = create_fungible_token(&env, &admin, "WBTC", "WBTC", 8);
 
     // Deploy vault contract (constructor-based)
     let (vault_addr_cfg, _) = create_vault(
@@ -2087,7 +2088,7 @@ fn test_vault_initialization_with_config() {
         150,
         150,
         &fee_receiver,
-        &token_contract, // Use token as withdraw currency
+        &withdraw_currency,
     );
     let vault_client = SolvBTCVaultClient::new(&env, &vault_addr_cfg);
     // domain setter removed; keep defaults
