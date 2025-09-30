@@ -52,6 +52,10 @@ pub trait VaultOperations {
     /// Withdraw request
     fn withdraw_request(env: Env, from: Address, shares: i128, request_hash: Bytes);
 
+    /// Alternative withdraw request using burn_from with allowance
+    /// Requires prior approval from the 'from' address to the vault contract
+    fn withdraw_request_with_allowance(env: Env, from: Address, shares: i128, request_hash: Bytes);
+
     /// Treasurer deposit (prepare liquidity for withdrawals)
     fn treasurer_deposit(env: Env, amount: i128);
 }

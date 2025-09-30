@@ -275,86 +275,13 @@ impl VaultOperations for SolvBTCVault {
     }
 
     fn withdraw_request(env: Env, from: Address, shares: i128, request_hash: Bytes) {
-        from.require_auth(); // Verify caller identity
-                             // Verify parameters
-        if shares <= 0 {
-            panic_with_error!(env, VaultError::InvalidAmount);
-        }
+        from.require_auth();
+        Self::withdraw_request_internal(&env, &from, shares, &request_hash, false);
+    }
 
-        // Get current nav from oracle
-        let current_nav = Self::get_nav_from_oracle(&env);
-
-        // Get withdraw token address (first supported currency)
-        let withdraw_token: Address = Self::get_withdraw_currency_internal(&env);
-
-        // Generate unique request key: second hash with all parameters (_msgSender, withdrawToken, requestHash, shares, nav)
-        let request_key = Self::generate_request_key(
-            &env,
-            &from,
-            &withdraw_token,
-            &request_hash,
-            shares,
-            current_nav,
-        );
-
-        // Check if request already exists
-        let current_status: WithdrawStatus = env
-            .storage()
-            .persistent()
-            .get(&request_key)
-            .unwrap_or(WithdrawStatus::NotExist);
-
-        if current_status != WithdrawStatus::NotExist {
-            panic_with_error!(env, VaultError::RequestAlreadyExists);
-        }
-
-        // Get token contract address
-        let token_contract: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::TokenContract)
-            .unwrap();
-
-        // Check user has enough shares balance
-        let token_client = TokenClient::new(&env, &token_contract);
-        let user_balance = token_client.balance(&from);
-
-        if user_balance < shares {
-            panic_with_error!(env, VaultError::InsufficientBalance);
-        }
-
-        // Burn user's shares directly via token burn
-        token_client.burn(&from, &shares);
-        // Set withdraw request status to PENDING
-        env.storage()
-            .persistent()
-            .set(&request_key, &WithdrawStatus::Pending);
-
-        // Calculate preview amount for the event using the same formula as withdraw
-        let preview_amount = Self::calculate_withdraw_amount(
-            &env,
-            shares,
-            current_nav,
-            Self::get_shares_token_decimals(&env),
-            Self::get_withdraw_token_decimals(&env),
-            Self::get_nav_decimals_from_oracle(&env),
-        );
-
-        // Emit WithdrawRequest event
-        env.events().publish(
-            (
-                Symbol::new(&env, "withdraw_request"),
-                from.clone(),
-                withdraw_token.clone(),
-            ),
-            WithdrawRequestEvent {
-                token_contract,
-                shares,
-                request_hash,
-                nav: current_nav,
-                amount: preview_amount,
-            },
-        );
+    fn withdraw_request_with_allowance(env: Env, from: Address, shares: i128, request_hash: Bytes) {
+        from.require_auth();
+        Self::withdraw_request_internal(&env, &from, shares, &request_hash, true);
     }
 
     fn withdraw(
@@ -1129,6 +1056,97 @@ impl SolvBTCVault {
         let nav_precision = 10_i128.pow(nav_decimals);
         let withdraw_precision = 10_i128.pow(withdraw_token_decimals);
         (shares * nav * withdraw_precision) / (nav_precision * shares_precision)
+    }
+
+    /// Internal function to handle withdraw request logic
+    fn withdraw_request_internal(
+        env: &Env,
+        from: &Address,
+        shares: i128,
+        request_hash: &Bytes,
+        use_burn_from: bool,
+    ) {
+        // Verify parameters
+        if shares <= 0 {
+            panic_with_error!(env, VaultError::InvalidAmount);
+        }
+
+        // Get current nav from oracle
+        let current_nav = Self::get_nav_from_oracle(env);
+
+        // Get withdraw token address (first supported currency)
+        let withdraw_token: Address = Self::get_withdraw_currency_internal(env);
+
+        // Generate unique request key: second hash with all parameters (_msgSender, withdrawToken, requestHash, shares, nav)
+        let request_key = Self::generate_request_key(
+            env,
+            from,
+            &withdraw_token,
+            request_hash,
+            shares,
+            current_nav,
+        );
+
+        // Check if request already exists
+        let current_status: WithdrawStatus = env
+            .storage()
+            .persistent()
+            .get(&request_key)
+            .unwrap_or(WithdrawStatus::NotExist);
+
+        if current_status != WithdrawStatus::NotExist {
+            panic_with_error!(env, VaultError::RequestAlreadyExists);
+        }
+
+        // Get token contract address
+        let token_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenContract)
+            .unwrap();
+
+        // Check user has enough shares balance
+        let token_client = TokenClient::new(env, &token_contract);
+        let user_balance = token_client.balance(from);
+
+        if user_balance < shares {
+            panic_with_error!(env, VaultError::InsufficientBalance);
+        }
+
+        // Burn user's shares using the appropriate method
+        if use_burn_from {
+            // Use burn_from with allowance (vault as spender)
+            token_client.burn_from(&env.current_contract_address(), from, &shares);
+        } else {
+            // Use direct burn (requires caller to be the token owner)
+            token_client.burn(from, &shares);
+        }
+
+        // Set withdraw request status to PENDING
+        env.storage()
+            .persistent()
+            .set(&request_key, &WithdrawStatus::Pending);
+
+        // Calculate preview amount for the event using the same formula as withdraw
+        let preview_amount = Self::calculate_withdraw_amount(
+            env,
+            shares,
+            current_nav,
+            Self::get_shares_token_decimals(env),
+            Self::get_withdraw_token_decimals(env),
+            Self::get_nav_decimals_from_oracle(env),
+        );
+
+        env.events().publish(
+            ( Symbol::new(env, "withdraw_request"), from.clone(), withdraw_token.clone()),
+            WithdrawRequestEvent {
+                token_contract,
+                shares,
+                request_hash: request_hash.clone(),
+                nav: current_nav,
+                amount: preview_amount,
+            },
+        );
     }
 }
 

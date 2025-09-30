@@ -2198,6 +2198,104 @@ fn test_withdraw_request_insufficient_balance() {
     client.withdraw_request(&user, &shares, &request_hash);
 }
 
+/// Test withdraw_request_with_allowance function
+#[test]
+fn test_withdraw_request_with_allowance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _token, _oracle, _treasurer) = create_vault_with_mocks(&env);
+    let user = Address::generate(&env);
+    let request_hash = create_request_hash(&env, 123);
+    let shares = 1000i128;
+
+    // Call the new withdraw_request_with_allowance function
+    // With mock_all_auths(), this should pass even though it uses burn_from
+    client.withdraw_request_with_allowance(&user, &shares, &request_hash);
+}
+
+/// Test withdraw_request_with_allowance with duplicate request
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #309)")]
+fn test_withdraw_request_with_allowance_duplicate() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _token, _oracle, _treasurer) = create_vault_with_mocks(&env);
+    let user = Address::generate(&env);
+    let request_hash = create_request_hash(&env, 456);
+    let shares = 1000i128;
+
+    // First request should succeed
+    client.withdraw_request_with_allowance(&user, &shares, &request_hash);
+
+    // Second request with same parameters should fail with RequestAlreadyExists
+    client.withdraw_request_with_allowance(&user, &shares, &request_hash);
+}
+
+/// Test withdraw_request_with_allowance with invalid amount (zero)
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #305)")]
+fn test_withdraw_request_with_allowance_invalid_amount_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _token, _oracle, _treasurer) = create_vault_with_mocks(&env);
+    let user = Address::generate(&env);
+    let request_hash = create_request_hash(&env, 789);
+
+    // Call with zero amount should panic
+    client.withdraw_request_with_allowance(&user, &0, &request_hash);
+}
+
+/// Test withdraw_request_with_allowance with invalid amount (negative)
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #305)")]
+fn test_withdraw_request_with_allowance_invalid_amount_negative() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _token, _oracle, _treasurer) = create_vault_with_mocks(&env);
+    let user = Address::generate(&env);
+    let request_hash = create_request_hash(&env, 790);
+
+    // Call with negative amount should panic
+    client.withdraw_request_with_allowance(&user, &-100, &request_hash);
+}
+
+/// Test withdraw_request_with_allowance should fail when user shares balance is insufficient
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #310)")]
+fn test_withdraw_request_with_allowance_insufficient_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Use mocks: MockToken.balance() returns 1_000_000_000_000_000_000
+    // Pass shares slightly larger than that to trigger InsufficientBalance
+    let (client, _token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
+    let user = Address::generate(&env);
+    let request_hash = create_request_hash(&env, 9_998);
+    let shares = 1_000_000_000_000_000_001i128; // > mock balance
+
+    client.withdraw_request_with_allowance(&user, &shares, &request_hash);
+}
+
+/// Test withdraw_request_with_allowance with zero withdraw fee ratio allows operation
+#[test]
+fn test_withdraw_request_with_allowance_with_zero_withdraw_fee_ratio() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _token, _oracle, _treasurer) = create_vault_with_zero_fee(&env);
+
+    let user = Address::generate(&env);
+    let request_hash = create_request_hash(&env, 888);
+    #[allow(unused_must_use)]
+    {
+        client.withdraw_request_with_allowance(&user, &1000, &request_hash);
+    }
+}
+
 /// Test EIP712 message creation and domain functions
 #[test]
 fn test_eip712_message_creation() {
