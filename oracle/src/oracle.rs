@@ -16,6 +16,9 @@ pub use crate::traits::{NavAdminManagement, NavManagerManagement, NavQuery};
 /// Maximum NAV decimal places
 const MAX_NAV_DECIMALS: u32 = 18;
 
+/// Seconds per day (24 hours)
+const SECONDS_PER_DAY: u64 = 86400;
+
 // ==================== Error Type Definition ====================
 
 #[contracterror]
@@ -30,6 +33,8 @@ pub enum OracleError {
     NavManagerNotSet = 203,
     // Insufficient permissions
     Unauthorized = 204,
+    // NAV cannot be updated within 24 hours
+    NavUpdateTooFrequent = 205,
 }
 
 // ==================== Data Key Definition ====================
@@ -45,6 +50,8 @@ pub enum DataKey {
     NavManager,
     // Vault contract address
     Vault,
+    // Last updated timestamp
+    LastUpdatedAt,
 }
 
 // ==================== Contract Definition ====================
@@ -76,6 +83,12 @@ impl SolvBtcOracle {
             .set(&DataKey::NavDecimals, &nav_decimals);
         env.storage().instance().set(&DataKey::Nav, &initial_nav);
 
+        // Set initial timestamp
+        let current_timestamp = env.ledger().timestamp();
+        env.storage()
+            .instance()
+            .set(&DataKey::LastUpdatedAt, &current_timestamp);
+
         // Publish initialization event
         env.events().publish(
             (Symbol::new(env, "initialize"),),
@@ -101,6 +114,14 @@ impl NavQuery for SolvBtcOracle {
         // Use the ownable trait to get owner
         // ownable::get_owner returns Option<Address>, unwrap it
         Self::get_admin_internal(&env)
+    }
+
+    /// Get the last updated timestamp
+    fn get_last_updated_at(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::LastUpdatedAt)
+            .unwrap_or(0)
     }
 }
 
@@ -146,6 +167,19 @@ impl NavManagerManagement for SolvBtcOracle {
         if nav <= 0 {
             panic_with_error!(&env, OracleError::InvalidArgument);
         }
+
+        // Check 24-hour update frequency limit
+        let current_timestamp = env.ledger().timestamp();
+        let last_updated_at: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::LastUpdatedAt)
+            .unwrap_or(0);
+
+        if current_timestamp < last_updated_at + SECONDS_PER_DAY {
+            panic_with_error!(&env, OracleError::NavUpdateTooFrequent);
+        }
+
         //Check new nav only increase or equal prev NAV ( >=)
         let current_nav: i128 = env.storage().instance().get(&DataKey::Nav).unwrap();
 
@@ -160,10 +194,15 @@ impl NavManagerManagement for SolvBtcOracle {
         // Update NAV value
         env.storage().instance().set(&DataKey::Nav, &nav);
 
+        // Update last updated timestamp
+        env.storage()
+            .instance()
+            .set(&DataKey::LastUpdatedAt, &current_timestamp);
+
         // Publish event
         env.events().publish(
             (Symbol::new(&env, "set_nav"),),
-            (nav_manager, current_nav, nav),
+            (nav_manager, current_nav, nav, current_timestamp),
         );
     }
 }
