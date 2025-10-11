@@ -53,7 +53,6 @@ pub fn create_vault<'a>(
     oracle: &'a Address,
     treasurer: &'a Address,
     withdraw_verifier: &'a BytesN<32>,
-    deposit_fee_ratio: i128,
     withdraw_fee_ratio: i128,
     withdraw_fee_receiver: &'a Address,
     withdraw_currency: &'a Address,
@@ -66,7 +65,6 @@ pub fn create_vault<'a>(
             oracle,
             treasurer,
             withdraw_verifier,
-            deposit_fee_ratio,
             withdraw_fee_ratio,
             withdraw_fee_receiver,
             withdraw_currency,
@@ -125,7 +123,6 @@ impl VaultTestEnv {
             &treasurer,
             &withdraw_verifier,
             100,
-            100,
             &admin,
             &wbtc_token_addr, // Use WBTC as withdraw currency
         );
@@ -175,9 +172,9 @@ impl VaultTestEnv {
         self.get_oracle_client()
             .set_vault_by_admin(&self.vault_addr);
 
-        // 3. Allow WBTC as supported currency for deposits
+        // 3. Allow WBTC as supported currency for deposits with 1% deposit fee
         self.get_vault_client()
-            .add_currency_by_admin(&self.wbtc_token_addr);
+            .add_currency_by_admin(&self.wbtc_token_addr, &100i128); // 100 basis points = 1%
 
         // 4. WBTC is already configured as withdraw currency in constructor
 
@@ -2085,7 +2082,6 @@ fn test_vault_initialization_with_config() {
         &treasurer,
         &withdraw_verifier,
         150,
-        150,
         &fee_receiver,
         &token_contract, // Use token as withdraw currency
     );
@@ -2124,7 +2120,6 @@ fn test_vault_initialization_with_config() {
         &oracle,
         &treasurer,
         &withdraw_verifier,
-        150,
         150,
         &fee_receiver,
         &token_contract, // Use token as withdraw currency

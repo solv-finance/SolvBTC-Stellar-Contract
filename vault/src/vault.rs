@@ -66,8 +66,8 @@ pub enum DataKey {
     TokenContract,
     /// Supported currencies mapping (Map<Address, bool>)
     AllowedCurrency,
-    /// Deposit fee ratio
-    DepositFeeRatio,
+    /// Deposit fee ratio per currency: Map<Address, i128>
+    CurrencyDepositFee,
     /// Withdrawal currency
     WithdrawCurrency,
     /// Withdrawal fee ratio
@@ -151,7 +151,6 @@ impl SolvBTCVault {
         oracle: Address,
         treasurer: Address,
         withdraw_verifier: BytesN<32>,
-        deposit_fee_ratio: i128,
         withdraw_fee_ratio: i128,
         withdraw_fee_receiver: Address,
         withdraw_currency: Address,
@@ -181,9 +180,6 @@ impl SolvBTCVault {
         env.storage()
             .instance()
             .set(&DataKey::WithdrawFeeReceiver, &withdraw_fee_receiver);
-        env.storage()
-            .instance()
-            .set(&DataKey::DepositFeeRatio, &deposit_fee_ratio);
 
         // Set withdraw currency
         env.storage()
@@ -221,8 +217,8 @@ impl VaultOperations for SolvBTCVault {
             panic_with_error!(env, VaultError::CurrencyNotAllowed);
         }
 
-        // Get deposit fee ratio (can be 0 for no fee)
-        let deposit_fee_ratio = Self::get_deposit_fee_ratio_internal(&env);
+        // Get deposit fee ratio for this currency (can be 0 for no fee)
+        let deposit_fee_ratio = Self::get_deposit_fee_ratio_for_currency_internal(&env, &currency);
 
         // Calculate fee: fee = amount * depositFeeRatio / 10000
         let fee = (amount * deposit_fee_ratio) / FEE_PRECISION;
@@ -550,7 +546,12 @@ impl VaultOperations for SolvBTCVault {
 #[contractimpl]
 impl CurrencyManagement for SolvBTCVault {
     #[only_owner]
-    fn add_currency_by_admin(env: Env, currency: Address) {
+    fn add_currency_by_admin(env: Env, currency: Address, deposit_fee_ratio: i128) {
+        // Verify deposit fee ratio
+        if deposit_fee_ratio < 0 || deposit_fee_ratio > FEE_PRECISION {
+            panic_with_error!(env, VaultError::InvalidDepositFeeRatio);
+        }
+
         // Get current currency Map
         let mut currencies: Map<Address, bool> = env
             .storage()
@@ -579,6 +580,9 @@ impl CurrencyManagement for SolvBTCVault {
             (Symbol::new(&env, "add_currency"), currency.clone()),
             SetAllowedCurrencyEvent { allowed: true },
         );
+
+        // Set deposit fee for this currency
+        Self::set_deposit_fee_ratio_internal(&env, &currency, deposit_fee_ratio);
     }
 
     #[only_owner]
@@ -600,6 +604,17 @@ impl CurrencyManagement for SolvBTCVault {
         env.storage()
             .instance()
             .set(&DataKey::AllowedCurrency, &currencies);
+
+        // Remove deposit fee for this currency
+        let mut deposit_fees: Map<Address, i128> = env
+            .storage()
+            .instance()
+            .get(&DataKey::CurrencyDepositFee)
+            .unwrap_or_else(|| Map::new(&env));
+        deposit_fees.remove(currency.clone());
+        env.storage()
+            .instance()
+            .set(&DataKey::CurrencyDepositFee, &deposit_fees);
 
         // Publish event
         env.events().publish(
@@ -695,21 +710,19 @@ impl SystemManagement for SolvBTCVault {
     }
 
     #[only_owner]
-    fn set_deposit_fee_ratio_by_admin(env: Env, deposit_fee_ratio: i128) {
+    fn set_deposit_fee_ratio_by_admin(env: Env, currency: Address, deposit_fee_ratio: i128) {
         // Verify fee ratio
         if deposit_fee_ratio < 0 || deposit_fee_ratio > FEE_PRECISION {
             panic_with_error!(env, VaultError::InvalidDepositFeeRatio);
         }
 
-        env.storage()
-            .instance()
-            .set(&DataKey::DepositFeeRatio, &deposit_fee_ratio);
+        // Check if currency is supported
+        if !Self::is_currency_supported_internal(&env, &currency) {
+            panic_with_error!(env, VaultError::CurrencyNotAllowed);
+        }
 
-        // Publish event
-        env.events().publish(
-            (Symbol::new(&env, "set_deposit_fee_ratio"),),
-            (Self::get_admin_internal(&env), deposit_fee_ratio),
-        );
+        // Set deposit fee ratio 
+        Self::set_deposit_fee_ratio_internal(&env, &currency, deposit_fee_ratio);
     }
 
     #[only_owner]
@@ -779,11 +792,8 @@ impl VaultQuery for SolvBTCVault {
             .unwrap_or(0)
     }
 
-    fn get_deposit_fee_ratio(env: Env) -> i128 {
-        env.storage()
-            .instance()
-            .get(&DataKey::DepositFeeRatio)
-            .unwrap()
+    fn get_deposit_fee_ratio(env: Env, currency: Address) -> i128 {
+        Self::get_deposit_fee_ratio_for_currency_internal(&env, &currency)
     }
 
     fn get_eip712_domain_name(env: Env) -> String {
@@ -940,12 +950,36 @@ impl SolvBTCVault {
             .unwrap() // Set in constructor, should always exist
     }
 
-    /// Get deposit fee ratio
-    fn get_deposit_fee_ratio_internal(env: &Env) -> i128 {
+    /// Get deposit fee ratio for a specific currency
+    fn get_deposit_fee_ratio_for_currency_internal(env: &Env, currency: &Address) -> i128 {
+        let deposit_fees: Map<Address, i128> = env
+            .storage()
+            .instance()
+            .get(&DataKey::CurrencyDepositFee)
+            .unwrap_or_else(|| Map::new(env));
+
+        // Return the fee for this currency, or 0 if not set
+        deposit_fees.get(currency.clone()).unwrap_or(0)
+    }
+
+    /// Set deposit fee ratio for a specific currency (internal helper)
+    fn set_deposit_fee_ratio_internal(env: &Env, currency: &Address, deposit_fee_ratio: i128) {
+        // Update deposit fee for this currency
+        let mut deposit_fees: Map<Address, i128> = env
+            .storage()
+            .instance()
+            .get(&DataKey::CurrencyDepositFee)
+            .unwrap_or_else(|| Map::new(env));
+        deposit_fees.set(currency.clone(), deposit_fee_ratio);
         env.storage()
             .instance()
-            .get(&DataKey::DepositFeeRatio)
-            .unwrap_or(0)
+            .set(&DataKey::CurrencyDepositFee, &deposit_fees);
+
+        // Publish event
+        env.events().publish(
+            (Symbol::new(env, "set_deposit_fee_ratio"), currency.clone()),
+            (Self::get_admin_internal(env), deposit_fee_ratio),
+        );
     }
 
     /// Get withdrawal fee ratio
