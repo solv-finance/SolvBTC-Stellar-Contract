@@ -5,7 +5,7 @@ use fungible_token::FungibleTokenContract;
 use fungible_token::FungibleTokenContractClient;
 use solvbtc_oracle::{SolvBtcOracle, SolvBtcOracleClient};
 use solvbtc_vault::{SolvBTCVault, SolvBTCVaultClient};
-use soroban_sdk::{testutils::Address as _, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
+use soroban_sdk::{testutils::{Address as _, Ledger}, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
 
 /// Contract creation helper functions
 pub fn create_fungible_token<'a>(
@@ -206,7 +206,21 @@ impl VaultTestEnv {
 
     /// Set Oracle NAV value
     fn set_nav_value(&self, nav: i128) {
+        // Advance time by 24 hours to allow NAV update
+        let current_time = self.env.ledger().timestamp();
+        self.env.ledger().with_mut(|li| {
+            li.timestamp = current_time + 86400; // Add 24 hours
+        });
+
         self.get_oracle_client().set_nav_by_manager(&nav);
+    }
+
+    /// Advance time by specified seconds
+    fn advance_time(&self, seconds: u64) {
+        let current_time = self.env.ledger().timestamp();
+        self.env.ledger().with_mut(|li| {
+            li.timestamp = current_time + seconds;
+        });
     }
 
     /// Get user's WBTC balance
@@ -299,42 +313,58 @@ impl VaultTestEnv {
     ) -> Bytes {
         let mut encoded = Bytes::new(&self.env);
 
-        // Add network ID (chain ID)
+        // 1. Add type hash as the first item
+        let type_hash = self.env.crypto().sha256(&Bytes::from_slice(&self.env,
+            b"Withdraw(uint256 chainId,string action,address user,address withdrawToken,uint256 shares,uint256 nav,bytes32 requestHash)"));
+        encoded.append(&type_hash.into());
+
+        // 2. Add network ID (chain ID) - already 32 bytes
         let network_id = self.env.ledger().network_id();
         encoded.append(&network_id.into());
 
-        // Add action (fixed as "withdraw")
+        // 3. Hash action (dynamic string) before concatenation
         let action_bytes = Bytes::from_slice(&self.env, b"withdraw");
-        encoded.append(&action_bytes);
+        let action_hash = self.env.crypto().sha256(&action_bytes);
+        encoded.append(&action_hash.into());
 
-        // Add user address
-        encoded.append(&user_address.clone().to_xdr(&self.env));
+        // 4. Hash user address (consistent with calculate_domain_separator)
+        let user_xdr = user_address.clone().to_xdr(&self.env);
+        let user_hash = self.env.crypto().sha256(&user_xdr);
+        encoded.append(&user_hash.into());
 
-        // Add target currency
+        // 5. Hash target token address (consistent encoding)
+        let token_xdr = target_token.clone().to_xdr(&self.env);
+        let token_hash = self.env.crypto().sha256(&token_xdr);
+        encoded.append(&token_hash.into());
 
-        encoded.append(&target_token.clone().to_xdr(&self.env));
+        // 6. Add target amount (shares) as fixed 32-byte representation
+        let mut amount_bytes = [0u8; 32];
+        let amount_be = target_amount.to_be_bytes();
+        amount_bytes[32 - amount_be.len()..].copy_from_slice(&amount_be);
+        encoded.append(&Bytes::from_array(&self.env, &amount_bytes));
 
-        // Add target amount (shares)
-        encoded.append(&Bytes::from_array(&self.env, &target_amount.to_be_bytes()));
+        // 7. Add NAV value as fixed 32-byte representation
+        let mut nav_bytes = [0u8; 32];
+        let nav_be = nav.to_be_bytes();
+        nav_bytes[32 - nav_be.len()..].copy_from_slice(&nav_be);
+        encoded.append(&Bytes::from_array(&self.env, &nav_bytes));
 
-        // Add NAV value
-        encoded.append(&Bytes::from_array(&self.env, &nav.to_be_bytes()));
-
-        // Add request hash
-        encoded.append(request_hash);
+        // 8. Hash request_hash (dynamic bytes) before concatenation
+        let request_hash_hashed = self.env.crypto().sha256(request_hash);
+        encoded.append(&request_hash_hashed.into());
 
         encoded
     }
 
-    /// Create EIP712 standard signature verification message: \x19\x01 + DomainSeparator + MessageHash
-    fn create_eip712_signature_message(&self, message_hash: &Bytes) -> Bytes {
+    /// Create signature signature verification message: \x19\x01 + DomainSeparator + MessageHash
+    fn create_signature_message(&self, message_hash: &Bytes) -> Bytes {
         let mut encoded = Bytes::new(&self.env);
 
-        // 1. Add EIP712 fixed prefix \x19\x01
+        // 1. Add fixed prefix \x19\x01
         encoded.append(&Bytes::from_slice(&self.env, &[0x19, 0x01]));
 
         // 2. Get and add DomainSeparator
-        let domain_separator = self.get_vault_client().get_eip712_domain_separator();
+        let domain_separator = self.get_vault_client().get_domain_separator();
         encoded.append(&domain_separator);
 
         // 3. Add MessageHash
@@ -343,7 +373,7 @@ impl VaultTestEnv {
         encoded
     }
 
-    /// Use real private key to sign withdraw message - using EIP712 standard
+    /// Use real private key to sign withdraw message - using domain standard
     fn sign_vault_withdraw_message(
         &self,
         user_address: &Address,
@@ -369,12 +399,12 @@ impl VaultTestEnv {
         let message_hash_bytes: Bytes = message_hash.into();
         Self::debug_print_bytes("Message hash", &message_hash_bytes);
 
-        // 3. Create EIP712 standard signature verification message
-        let eip712_message = self.create_eip712_signature_message(&message_hash_bytes);
-        Self::debug_print_bytes("EIP712 message", &eip712_message);
+        // 3. Create signature signature verification message
+        let signature_message = self.create_signature_message(&message_hash_bytes);
+        Self::debug_print_bytes("signature message", &signature_message);
 
-        // 3.5. Ed25519 requires an additional sha256 hash on the eip712_message
-        let digest = self.env.crypto().sha256(&eip712_message);
+        // 3.5. Ed25519 requires an additional sha256 hash on the signature_message
+        let digest = self.env.crypto().sha256(&signature_message);
         let digest_bytes: Bytes = digest.into();
         Self::debug_print_bytes("Final digest for Ed25519", &digest_bytes);
 
@@ -728,13 +758,13 @@ fn test_complete_vault_withdraw_flow() {
 
     let vault_client = test_env.get_vault_client();
 
-    // Verify EIP712 domain information
-    let domain_name = vault_client.get_eip712_domain_name();
-    let domain_version = vault_client.get_eip712_domain_version();
-    let chain_id = vault_client.get_eip712_chain_id();
-    let domain_separator = vault_client.get_eip712_domain_separator();
+    // Verify domain information
+    let domain_name = vault_client.get_domain_name();
+    let domain_version = vault_client.get_domain_version();
+    let chain_id = vault_client.get_chain_id();
+    let domain_separator = vault_client.get_domain_separator();
 
-    println!("EIP712 domain information:");
+    println!("Domain information:");
     println!("   Domain name: {}", domain_name.to_string());
     println!("   Domain version: {}", domain_version.to_string());
     println!("   ChainID length: {} bytes", chain_id.len());
@@ -777,7 +807,7 @@ fn test_complete_vault_withdraw_flow() {
     println!("  ✓ User deposit process normal");
     println!("  ✓ Treasurer liquidity preparation normal");
     println!("  ✓ Withdrawal parameters generation correct");
-    println!("  ✓ EIP712 domain configuration correct");
+    println!("  ✓ Domain configuration correct");
     println!("  ✓ Signature validation process complete");
     println!("  ✓ Contract state query normal");
     println!("  ✓ All contract interactions normal");
@@ -808,20 +838,20 @@ fn test_withdraw_error_scenarios() {
     );
     assert_eq!(invalid_signature.len(), 32); // Verify it's actually invalid length
 
-    // Test case 2: Verify EIP712 function accessibility
-    println!("=== Test 2: EIP712 function accessibility ===");
+    // Test case 2: Verify Domain function accessibility
+    println!("=== Test 2: Domain function accessibility ===");
 
-    let domain_name = vault_client.get_eip712_domain_name();
-    let domain_version = vault_client.get_eip712_domain_version();
-    let chain_id = vault_client.get_eip712_chain_id();
-    let domain_separator = vault_client.get_eip712_domain_separator();
+    let domain_name = vault_client.get_domain_name();
+    let domain_version = vault_client.get_domain_version();
+    let chain_id = vault_client.get_chain_id();
+    let domain_separator = vault_client.get_domain_separator();
 
     assert!(domain_name.len() > 0);
     assert!(domain_version.len() > 0);
     assert_eq!(chain_id.len(), 32);
     assert_eq!(domain_separator.len(), 32);
 
-    println!("✓ EIP712 function accessibility test passed");
+    println!("✓ Domain function accessibility test passed");
 
     // Test case 3: Verify contract initialization state
     println!("=== Test 3: Contract initialization state ===");
@@ -923,21 +953,21 @@ fn test_withdraw_signature_validation_structure() {
     );
     println!("   Currency support status: {} ✓", is_currency_supported);
 
-    // 7. Verify EIP712 domain settings
-    let domain_name = vault_client.get_eip712_domain_name();
+    // 7. Verify domain settings
+    let domain_name = vault_client.get_domain_name();
     println!("domain_name: {:?}", domain_name);
-    let domain_version = vault_client.get_eip712_domain_version();
+    let domain_version = vault_client.get_domain_version();
     println!("domain_version: {:?}", domain_version);
-    let chain_id = vault_client.get_eip712_chain_id();
+    let chain_id = vault_client.get_chain_id();
     println!("chain_id: {:?}", chain_id);
-    let domain_separator = vault_client.get_eip712_domain_separator();
+    let domain_separator = vault_client.get_domain_separator();
     println!("domain_separator: {:?}", domain_separator);
     assert_eq!(domain_name.to_string(), "Solv Vault Withdraw");
     assert_eq!(domain_version.to_string(), "1");
     assert_eq!(chain_id.len(), 32);
     assert_eq!(domain_separator.len(), 32);
 
-    println!("EIP712 domain settings verification:");
+    println!("Domain settings verification:");
     println!("   Domain name: {} ✓", domain_name.to_string());
     println!("   Domain version: {} ✓", domain_version.to_string());
     println!("   ChainID length: {} ✓", chain_id.len());
@@ -951,7 +981,7 @@ fn test_withdraw_signature_validation_structure() {
     println!("Test summary:");
     println!("  ✓ All parameters format correct");
     println!("  ✓ Contract state configuration correct");
-    println!("  ✓ EIP712 domain settings correct");
+    println!("  ✓ Domain settings correct");
     println!("  ✓ Signature validation mechanism works correctly");
     println!("  ✓ Complete withdrawal process structure verification passed");
 }
@@ -1034,7 +1064,7 @@ fn test_withdraw_ed25519_success_integration() {
         .get_vault_client()
         .withdraw_request(&test_env.user, &shares, &request_hash);
 
-    // 5) Sign EIP712 message with real ed25519 key
+    // 5) Sign signature message with real ed25519 key
     let signature = test_env.sign_vault_withdraw_message(
         &test_env.user,
         shares,
@@ -1177,7 +1207,7 @@ fn test_withdraw_secp256k1_wrong_pubkey_should_panic() {
     // Hash the message
     let message_hash = test_env.env.crypto().sha256(&withdraw_message);
 
-    // Create EIP712 message
+    // Create signature message
     let domain_separator = Bytes::from_slice(
         &test_env.env,
         &[
@@ -1187,10 +1217,10 @@ fn test_withdraw_secp256k1_wrong_pubkey_should_panic() {
         ],
     );
     let prefix = Bytes::from_slice(&test_env.env, &[0x19, 0x01]);
-    let mut eip712_message = Bytes::new(&test_env.env);
-    eip712_message.append(&prefix);
-    eip712_message.append(&domain_separator);
-    eip712_message.append(&Bytes::from(message_hash));
+    let mut signature_message = Bytes::new(&test_env.env);
+    signature_message.append(&prefix);
+    signature_message.append(&domain_separator);
+    signature_message.append(&Bytes::from(message_hash));
 
     // Create a valid secp256k1 signature that will recover to a different public key
     // Using a known valid signature (r||s format, 64 bytes total)
@@ -1724,17 +1754,17 @@ fn test_complete_withdraw_operation_flow() {
         "Treasurer should have sufficient WBTC liquidity"
     );
 
-    // Step 6: Verify EIP712 configuration
-    println!("=== Step 6: Verify EIP712 configuration ===");
-    let domain_name = vault_client.get_eip712_domain_name();
-    let domain_version = vault_client.get_eip712_domain_version();
-    let domain_separator = vault_client.get_eip712_domain_separator();
+    // Step 6: Verify Domain configuration
+    println!("=== Step 6: Verify Domain configuration ===");
+    let domain_name = vault_client.get_domain_name();
+    let domain_version = vault_client.get_domain_version();
+    let domain_separator = vault_client.get_domain_separator();
 
     assert_eq!(domain_name.to_string(), "Solv Vault Withdraw");
     assert_eq!(domain_version.to_string(), "1");
     assert_eq!(domain_separator.len(), 32);
 
-    println!("EIP712 configuration verification:");
+    println!("Domain configuration verification:");
     println!("  Domain name: {}", domain_name.to_string());
     println!("  Domain version: {}", domain_version.to_string());
     println!(
@@ -1772,7 +1802,7 @@ fn test_complete_withdraw_operation_flow() {
     println!("  ✓ Treasurer liquidity preparation normal");
     println!("  ✓ Withdrawal request creation successful");
     println!("  ✓ Withdrawal parameter preparation complete");
-    println!("  ✓ EIP712 configuration correct");
+    println!("  ✓ Domain configuration correct");
     println!("  ✓ Withdrawal configuration complete");
     println!("  ✓ Signature generation and verification mechanism complete");
     println!("  ✓ All operation functionality verification passed");
@@ -2064,14 +2094,15 @@ fn test_vault_initialization_with_config() {
 
     // Create test addresses
     let admin = Address::generate(&env);
-    let token_contract = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let (token_contract, _) = create_fungible_token(&env, &admin, "SolvBTC", "SOLVBTC", 8);
+    let (oracle, _) = create_oracle(&env, false);
     let treasurer = Address::generate(&env);
     let mut verifier_bytes = [0u8; 32];
     verifier_bytes[0] = 0xDE;
     verifier_bytes[1] = 0xAD;
     let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
     let fee_receiver = Address::generate(&env);
+    let (withdraw_currency, _) = create_fungible_token(&env, &admin, "WBTC", "WBTC", 8);
 
     // Deploy vault contract (constructor-based)
     let (vault_addr_cfg, _) = create_vault(
@@ -2083,7 +2114,7 @@ fn test_vault_initialization_with_config() {
         &withdraw_verifier,
         150,
         &fee_receiver,
-        &token_contract, // Use token as withdraw currency
+        &withdraw_currency,
     );
     let vault_client = SolvBTCVaultClient::new(&env, &vault_addr_cfg);
     // domain setter removed; keep defaults
@@ -2099,11 +2130,11 @@ fn test_vault_initialization_with_config() {
     );
     assert_eq!(vault_client.get_withdraw_fee_ratio(), 150);
     assert_eq!(
-        vault_client.get_eip712_domain_name(),
+        vault_client.get_domain_name(),
         String::from_str(&env, "Solv Vault Withdraw")
     );
     assert_eq!(
-        vault_client.get_eip712_domain_version(),
+        vault_client.get_domain_version(),
         String::from_str(&env, "1")
     );
 
@@ -2136,10 +2167,410 @@ fn test_vault_initialization_with_config() {
         vault_client2.get_withdraw_fee_ratio()
     );
     assert_eq!(
-        vault_client.get_eip712_domain_name(),
-        vault_client2.get_eip712_domain_name()
+        vault_client.get_domain_name(),
+        vault_client2.get_domain_name()
     );
 
     println!("✓ Both initialization methods produce identical results!");
     println!("Configuration-based initialization test completed successfully!");
+}
+
+// ==================== withdraw_request_with_allowance Integration Tests ====================
+
+#[test]
+fn test_withdraw_request_with_allowance_operation() {
+    println!("Starting withdraw_request_with_allowance operation test");
+
+    let test_env = VaultTestEnv::new();
+
+    test_env.setup_relationships();
+
+    // Set withdraw fee receiver
+    let fee_receiver = Address::generate(&test_env.env);
+    test_env
+        .get_vault_client()
+        .set_withdraw_fee_recv_by_admin(&fee_receiver);
+
+    // Step 1: User deposits to get SolvBTC
+    let deposit_amount = 300_000_000i128; // 3 WBTC
+    let nav_value = 100_000_000i128; // 1.0 NAV
+
+    test_env.mint_wbtc_to_user(deposit_amount);
+    test_env.approve_vault_for_wbtc(deposit_amount);
+    test_env.set_nav_value(nav_value);
+
+    let minted_tokens = test_env.deposit(deposit_amount);
+    println!(
+        "User deposited {} WBTC, received {} SolvBTC",
+        deposit_amount, minted_tokens
+    );
+
+    // Step 2: Test multiple withdrawal requests using withdraw_request_with_allowance
+    let withdraw_requests = vec![
+        (50_000_000i128, 100u64, "0.5 WBTC withdrawal request #1"),
+        (100_000_000i128, 200u64, "1.0 WBTC withdrawal request #2"),
+        (75_000_000i128, 300u64, "0.75 WBTC withdrawal request #3"),
+    ];
+
+    let request_count = withdraw_requests.len();
+
+    for (shares_amount, nonce, description) in withdraw_requests {
+        println!("=== Testing: {} ===", description);
+
+        // Create request hash
+        let request_hash = test_env.create_request_hash(nonce);
+
+        // Record pre-withdrawal request state
+        let before_user_solvbtc = test_env.get_user_solvbtc_balance();
+
+        println!(
+            "User SolvBTC balance before withdrawal request: {}",
+            before_user_solvbtc
+        );
+        println!("Request withdrawal shares: {}", shares_amount);
+        println!("Request hash length: {} bytes", request_hash.len());
+
+        // Verify user has sufficient SolvBTC
+        assert!(
+            before_user_solvbtc >= shares_amount,
+            "User SolvBTC balance should be sufficient for withdrawal request"
+        );
+
+        // User authorizes Vault to use SolvBTC tokens
+        test_env.approve_vault_for_solvbtc(shares_amount);
+
+        // Execute withdrawal request operation using withdraw_request_with_allowance
+        let vault_client = test_env.get_vault_client();
+        vault_client.withdraw_request_with_allowance(&test_env.user, &shares_amount, &request_hash);
+
+        println!("✓ {} executed successfully", description);
+        println!("  Request shares: {} SolvBTC", shares_amount);
+        println!("  Request hash: {} bytes", request_hash.len());
+        println!("  Request nonce: {}", nonce);
+        println!();
+    }
+
+    // Verify final state
+    let final_user_solvbtc = test_env.get_user_solvbtc_balance();
+    println!("Final user SolvBTC balance: {}", final_user_solvbtc);
+
+    println!("Withdrawal request with allowance operation test completed!");
+    println!("Summary:");
+    println!(
+        "  ✓ Successfully created {} withdrawal requests using withdraw_request_with_allowance",
+        request_count
+    );
+    println!("  ✓ All request hashes format correctly (32 bytes)");
+    println!("  ✓ Withdrawal request with allowance operations execute normally");
+    println!("  ✓ Contract state management correct");
+}
+
+#[test]
+fn test_withdraw_request_with_allowance_ed25519_success() {
+    println!("Starting withdraw_request_with_allowance with ed25519 success test");
+
+    // 1) Initialize environment and relationships
+    let test_env = VaultTestEnv::new();
+    test_env.setup_relationships();
+
+    // 2) Set ed25519 verifier = real public key used by signer
+    let ed_pub = test_env.get_real_public_key(); // Bytes(32)
+    test_env
+        .get_vault_client()
+        .set_withdraw_verifier_by_admin(&0u32, &ed_pub);
+
+    // 3) Prepare balances: user deposit to get shares; treasurer provides liquidity
+    let nav = 100_000_000i128; // 1.0
+    let deposit_amount = 200_000_000i128; // 2 WBTC
+    test_env.mint_wbtc_to_user(deposit_amount);
+    test_env.approve_vault_for_wbtc(deposit_amount);
+    test_env.set_nav_value(nav);
+    let minted = test_env.deposit(deposit_amount);
+
+    // Treasurer liquidity >= expected withdraw amount
+    let liq = 200_000_000i128; // 2 WBTC
+    test_env.mint_wbtc_to_treasurer(liq);
+    test_env.approve_vault_for_treasurer_wbtc(liq);
+    test_env.treasurer_deposit_wbtc(liq);
+
+    // 4) Create withdraw_request using withdraw_request_with_allowance for shares
+    let shares = minted / 2; // withdraw half
+    let request_hash = test_env.create_request_hash(511);
+
+    // User authorizes Vault to use SolvBTC tokens
+    test_env.approve_vault_for_solvbtc(shares);
+
+    test_env
+        .get_vault_client()
+        .withdraw_request_with_allowance(&test_env.user, &shares, &request_hash);
+
+    // 5) Sign EIP712 message with real ed25519 key
+    let signature = test_env.sign_vault_withdraw_message(
+        &test_env.user,
+        shares,
+        &test_env.wbtc_token_addr,
+        nav,
+        &request_hash,
+    );
+
+    // 6) Call withdraw and verify balances
+    let before_user_wbtc = test_env.get_user_wbtc_balance();
+    let before_treas_wbtc = test_env.get_treasurer_wbtc_balance();
+    let before_vault_wbtc = test_env.get_vault_wbtc_balance();
+
+    // Compute expected amount using on-chain formula
+    let withdraw_dec = test_env.get_wbtc_token_client().decimals();
+    let shares_dec = test_env.get_solvbtc_token_client().decimals();
+    let nav_dec = test_env.get_oracle_client().get_nav_decimals();
+    let pow10 = |n: u32| -> i128 {
+        let mut x = 1i128;
+        for _ in 0..n {
+            x *= 10;
+        }
+        x
+    };
+    let amount = (shares * nav * pow10(withdraw_dec)) / (pow10(nav_dec) * pow10(shares_dec));
+    let fee_bps = test_env.get_vault_client().get_withdraw_fee_ratio();
+    let expected_fee = (amount * fee_bps) / 10000;
+    let expected_after = amount - expected_fee;
+
+    let actual_after = test_env.get_vault_client().withdraw(
+        &test_env.user,
+        &shares,
+        &nav,
+        &request_hash,
+        &signature,
+        &0u32, // signature_type=ed25519
+        &0u32, // recovery ignored
+    );
+
+    let after_user_wbtc = test_env.get_user_wbtc_balance();
+    let after_treas_wbtc = test_env.get_treasurer_wbtc_balance();
+    let after_vault_wbtc = test_env.get_vault_wbtc_balance();
+
+    assert_eq!(actual_after, expected_after);
+    assert_eq!(after_user_wbtc - before_user_wbtc, expected_after);
+    // Treasurer balance should remain the same since funds are transferred from vault contract
+    assert_eq!(before_treas_wbtc, after_treas_wbtc);
+    // Vault contract balance should decrease by the total amount (including fee)
+    assert_eq!(before_vault_wbtc - after_vault_wbtc, amount);
+
+    println!("✓ withdraw_request_with_allowance with ed25519 success test passed!");
+}
+
+#[test]
+fn test_complete_withdraw_with_allowance_operation_flow() {
+    println!("Starting complete withdraw_request_with_allowance operation flow test");
+
+    let test_env = VaultTestEnv::new();
+
+    test_env.setup_relationships();
+
+    // Set withdraw fee receiver
+    let fee_receiver = Address::generate(&test_env.env);
+    test_env
+        .get_vault_client()
+        .set_withdraw_fee_recv_by_admin(&fee_receiver);
+
+    // Step 1: User deposits to get SolvBTC
+    println!("=== Step 1: User deposit process ===");
+    let deposit_amount = 200_000_000i128; // 2 WBTC
+    let nav_value = 100_000_000i128; // 1.0 NAV
+
+    test_env.mint_wbtc_to_user(deposit_amount);
+    test_env.approve_vault_for_wbtc(deposit_amount);
+    test_env.set_nav_value(nav_value);
+
+    let minted_tokens = test_env.deposit(deposit_amount);
+    println!(
+        "User deposited {} WBTC, received {} SolvBTC",
+        deposit_amount, minted_tokens
+    );
+
+    // Step 2: Treasurer prepares withdrawal liquidity
+    println!("=== Step 2: Prepare withdrawal liquidity ===");
+    let liquidity_amount = 300_000_000i128; // 3 WBTC liquidity
+
+    test_env.mint_wbtc_to_treasurer(liquidity_amount);
+    test_env.approve_vault_for_treasurer_wbtc(liquidity_amount);
+    test_env.treasurer_deposit_wbtc(liquidity_amount);
+
+    println!(
+        "Treasurer deposited {} WBTC as withdrawal liquidity",
+        liquidity_amount
+    );
+
+    // Step 3: Create withdrawal request using withdraw_request_with_allowance
+    println!("=== Step 3: Create withdrawal request with allowance ===");
+    let withdraw_shares = 100_000_000i128; // 1 SolvBTC
+    let request_hash = test_env.create_request_hash(601);
+
+    // User authorizes Vault to use SolvBTC tokens
+    test_env.approve_vault_for_solvbtc(withdraw_shares);
+
+    let vault_client = test_env.get_vault_client();
+    vault_client.withdraw_request_with_allowance(&test_env.user, &withdraw_shares, &request_hash);
+
+    println!("Created withdrawal request: {} SolvBTC", withdraw_shares);
+    println!("Request hash length: {} bytes", request_hash.len());
+
+    // Step 4: Prepare withdrawal signature and parameters
+    println!("=== Step 4: Prepare withdrawal parameters ===");
+    let target_amount = withdraw_shares; // Withdrawal target amount
+    let withdraw_currency = vault_client.get_withdraw_currency().unwrap();
+
+    // Use real private key to sign
+    let signature = test_env.sign_vault_withdraw_message(
+        &test_env.user,
+        target_amount,
+        &withdraw_currency,
+        nav_value,
+        &request_hash,
+    );
+
+    println!("Withdrawal parameters prepared:");
+    println!("  Target amount: {} WBTC", target_amount);
+    println!("  NAV value: {}", nav_value);
+    println!("  Signature length: {} bytes", signature.len());
+
+    // Step 5: Verify pre-withdrawal state
+    println!("=== Step 5: Verify pre-withdrawal state ===");
+    let before_user_wbtc = test_env.get_user_wbtc_balance();
+    let before_user_solvbtc = test_env.get_user_solvbtc_balance();
+    let before_treasurer_wbtc = test_env.get_treasurer_wbtc_balance();
+
+    println!("Pre-withdrawal state:");
+    println!("  User WBTC balance: {}", before_user_wbtc);
+    println!("  User SolvBTC balance: {}", before_user_solvbtc);
+    println!("  Treasurer WBTC balance: {}", before_treasurer_wbtc);
+
+    // Verify state correctness
+    assert!(
+        before_user_solvbtc >= withdraw_shares,
+        "User should have sufficient SolvBTC"
+    );
+    assert!(
+        before_treasurer_wbtc >= target_amount,
+        "Treasurer should have sufficient WBTC liquidity"
+    );
+
+    // Step 6: Verify EIP712 configuration
+    println!("=== Step 6: Verify EIP712 configuration ===");
+    let domain_name = vault_client.get_eip712_domain_name();
+    let domain_version = vault_client.get_eip712_domain_version();
+    let domain_separator = vault_client.get_eip712_domain_separator();
+
+    assert_eq!(domain_name.to_string(), "Solv Vault Withdraw");
+    assert_eq!(domain_version.to_string(), "1");
+    assert_eq!(domain_separator.len(), 32);
+
+    println!("EIP712 configuration verification:");
+    println!("  Domain name: {}", domain_name.to_string());
+    println!("  Domain version: {}", domain_version.to_string());
+    println!(
+        "  Domain separator length: {} bytes",
+        domain_separator.len()
+    );
+
+    // Step 7: Verify withdrawal configuration
+    println!("=== Step 7: Verify withdrawal configuration ===");
+    let withdraw_verifier = vault_client.get_withdraw_verifier(&0u32);
+    let withdraw_fee_ratio = vault_client.get_withdraw_fee_ratio();
+    let withdraw_fee_receiver = vault_client.get_withdraw_fee_receiver();
+
+    println!("Withdrawal configuration verification:");
+    println!("  Verifier address: {:?}", withdraw_verifier);
+    println!(
+        "  Withdrawal fee rate: {}%",
+        withdraw_fee_ratio as f64 / 100.0
+    );
+    println!("  Fee receiver: {:?}", withdraw_fee_receiver);
+
+    // Verify configuration completeness
+    assert_eq!(
+        withdraw_currency, test_env.wbtc_token_addr,
+        "Withdrawal currency should be WBTC"
+    );
+    assert!(
+        withdraw_fee_ratio > 0,
+        "Withdrawal fee rate should be greater than 0"
+    );
+
+    println!("Complete withdrawal operation with allowance flow test completed!");
+    println!("Test summary:");
+    println!("  ✓ User deposit process normal");
+    println!("  ✓ Treasurer liquidity preparation normal");
+    println!("  ✓ Withdrawal request with allowance creation successful");
+    println!("  ✓ Withdrawal parameter preparation complete");
+    println!("  ✓ EIP712 configuration correct");
+    println!("  ✓ Withdrawal configuration complete");
+    println!("  ✓ Signature generation and verification mechanism complete");
+    println!("  ✓ All operation functionality verification passed");
+}
+
+#[test]
+fn test_comparison_withdraw_request_vs_with_allowance() {
+    println!("Starting comparison test: withdraw_request vs withdraw_request_with_allowance");
+
+    let test_env = VaultTestEnv::new();
+    test_env.setup_relationships();
+
+    // Set withdraw fee receiver
+    let fee_receiver = Address::generate(&test_env.env);
+    test_env
+        .get_vault_client()
+        .set_withdraw_fee_recv_by_admin(&fee_receiver);
+
+    // Prepare: User deposits to get SolvBTC
+    let deposit_amount = 400_000_000i128; // 4 WBTC
+    let nav_value = 100_000_000i128; // 1.0 NAV
+
+    test_env.mint_wbtc_to_user(deposit_amount);
+    test_env.approve_vault_for_wbtc(deposit_amount);
+    test_env.set_nav_value(nav_value);
+    let minted_tokens = test_env.deposit(deposit_amount);
+
+    println!(
+        "User deposited {} WBTC, received {} SolvBTC",
+        deposit_amount, minted_tokens
+    );
+
+    // Test 1: Using withdraw_request (original method)
+    println!("\n=== Test 1: Using withdraw_request ===");
+    let shares_1 = 100_000_000i128;
+    let request_hash_1 = test_env.create_request_hash(701);
+
+    test_env.approve_vault_for_solvbtc(shares_1);
+
+    test_env
+        .get_vault_client()
+        .withdraw_request(&test_env.user, &shares_1, &request_hash_1);
+
+    println!("✓ withdraw_request executed successfully");
+    println!("  Shares: {}", shares_1);
+
+    // Test 2: Using withdraw_request_with_allowance (new method)
+    println!("\n=== Test 2: Using withdraw_request_with_allowance ===");
+    let shares_2 = 100_000_000i128;
+    let request_hash_2 = test_env.create_request_hash(702);
+
+    test_env.approve_vault_for_solvbtc(shares_2);
+
+    test_env
+        .get_vault_client()
+        .withdraw_request_with_allowance(&test_env.user, &shares_2, &request_hash_2);
+
+    println!("✓ withdraw_request_with_allowance executed successfully");
+    println!("  Shares: {}", shares_2);
+
+    // Verify both methods work in mock environment
+    let final_balance = test_env.get_user_solvbtc_balance();
+    println!("\n=== Comparison Results ===");
+    println!("  Initial minted: {} SolvBTC", minted_tokens);
+    println!("  Used in withdraw_request: {} SolvBTC", shares_1);
+    println!("  Used in withdraw_request_with_allowance: {} SolvBTC", shares_2);
+    println!("  Final balance: {} SolvBTC", final_balance);
+    println!("\n✓ Both methods executed successfully in mock environment");
+    println!("Note: In real environment without mock_all_auths(), withdraw_request_with_allowance");
+    println!("      is the recommended method as it properly uses burn_from with allowance.");
 }

@@ -1173,10 +1173,12 @@ name = "solvbtc-vault"
 version = "1.0.0"
 dependencies = [
  "ed25519-dalek",
+ "fungible-token",
  "heapless",
  "hex",
  "rand",
  "sha3",
+ "solvbtc-oracle",
  "soroban-sdk",
  "stellar-default-impl-macro",
  "stellar-ownable",

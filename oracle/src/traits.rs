@@ -14,6 +14,9 @@ pub trait NavQuery {
 
     /// Get the current admin address
     fn get_admin(env: Env) -> Address;
+
+    /// Get the last updated timestamp
+    fn get_last_updated_at(env: Env) -> u64;
 }
 
 /// Admin management trait

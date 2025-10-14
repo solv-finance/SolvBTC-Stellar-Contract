@@ -2,7 +2,7 @@
 extern crate std;
 use soroban_sdk::{
     contract, contractimpl, contracttype,
-    testutils::{Address as _, Events},
+    testutils::{Address as _, Events, Ledger},
     Address, Bytes, BytesN, Env,
 };
 
@@ -75,6 +75,14 @@ fn setup_initialized_oracle(
         vault_client,
         vault_address,
     )
+}
+
+// Helper function to advance time by 24 hours
+fn advance_time_by_24_hours(env: &Env) {
+    let current_time = env.ledger().timestamp();
+    env.ledger().with_mut(|li| {
+        li.timestamp = current_time + 86400; // Add 24 hours
+    });
 }
 
 // ==================== Initialization Tests ====================
@@ -178,6 +186,9 @@ fn test_set_nav_by_manager_success() {
     let nav_manager = Address::generate(&env);
     client.set_nav_manager_by_admin(&nav_manager);
 
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     // NAV manager sets new NAV value (increase 4%, within allowed range)
     let new_nav = 1040000000; // Increase 4%
     client.set_nav_by_manager(&new_nav);
@@ -198,6 +209,9 @@ fn test_set_nav_invalid_nav() {
     let nav_manager = Address::generate(&env);
     client.set_nav_manager_by_admin(&nav_manager);
 
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     // Try to set negative NAV
     client.set_nav_by_manager(&-1000000000);
 }
@@ -215,6 +229,9 @@ fn test_set_nav_decreasing() {
     client.set_nav_manager_by_admin(&nav_manager);
 
     // Try to set smaller NAV (should fail, according to new logic change < 0 will fail)
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&900000000);
 }
 
@@ -234,6 +251,9 @@ fn test_set_nav_exceeds_limit() {
     client.set_nav_manager_by_admin(&nav_manager);
 
     // Try to set NAV value exceeding limit (increase 5%, exceeds 3% limit)
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&1050000000);
 }
 
@@ -246,6 +266,9 @@ fn test_set_nav_manager_not_set() {
     let (client, _, _, _, _) = setup_initialized_oracle(&env);
 
     // Don't set NAV manager, directly try to set NAV
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&1050000000);
 }
 
@@ -266,6 +289,9 @@ fn test_nav_change_at_limit() {
     client.set_nav_manager_by_admin(&nav_manager);
 
     // Set NAV change exactly at the limit
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&1050000000); // Exactly 5% growth
 
     assert_eq!(client.get_nav(), 1050000000);
@@ -286,6 +312,9 @@ fn test_zero_nav_change() {
     client.set_nav_manager_by_admin(&nav_manager);
 
     // Setting the same NAV value should succeed
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&1000000000);
 
     assert_eq!(client.get_nav(), 1000000000);
@@ -362,6 +391,9 @@ fn test_oracle_events_coverage() {
     client.set_vault_by_admin(&vault_address);
 
     // Set NAV (this publishes event)
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&1_050_000_000i128);
 
     let events = env.events().all();
@@ -392,10 +424,16 @@ fn test_complete_workflow() {
     assert_eq!(client.get_nav_manager(), nav_manager);
 
     // 3. Update NAV value
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&1100000000); // Increase 10%
     assert_eq!(client.get_nav(), 1100000000);
 
     // 4. Update NAV again
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&1210000000); // Increase 10% again
     assert_eq!(client.get_nav(), 1210000000);
 
@@ -422,6 +460,9 @@ fn test_nav_change_precision() {
     client.set_nav_manager_by_admin(&nav_manager);
 
     // 1% change should succeed
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&1010000000);
     assert_eq!(client.get_nav(), 1010000000);
 }
@@ -442,6 +483,9 @@ fn test_nav_change_precision_exceeds() {
     client.set_nav_manager_by_admin(&nav_manager);
 
     // 2% change should fail
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&1020000000);
 }
 
@@ -467,6 +511,9 @@ fn test_set_nav_by_manager_invalid_nav_zero() {
     let nav_manager = Address::generate(&env);
     client.set_nav_manager_by_admin(&nav_manager);
 
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&0);
 }
 
@@ -481,6 +528,9 @@ fn test_set_nav_by_manager_invalid_nav_negative() {
     // Set NAV manager
     let nav_manager = Address::generate(&env);
     client.set_nav_manager_by_admin(&nav_manager);
+
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
 
     client.set_nav_by_manager(&-100);
 }
@@ -568,6 +618,9 @@ fn test_nav_manager_complete_workflow() {
     // Update NAV (this should emit an event)
     let old_nav = client.get_nav();
     let new_nav = 1050000000; // Increase 5%
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&new_nav);
 
     // Verify NAV was updated
@@ -692,6 +745,9 @@ fn test_nav_manager_authorization() {
 
     // Test nav manager can update NAV
     let new_nav = 1100000000; // 10% increase
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&new_nav);
 
     assert_eq!(client.get_nav(), new_nav);
@@ -715,6 +771,9 @@ fn test_nav_change_at_exact_limits() {
     // Test exact boundary: 10% increase
     let current_nav = client.get_nav();
     let exact_limit_nav = current_nav + (current_nav * 1000 / 10000);
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&exact_limit_nav);
 
     assert_eq!(client.get_nav(), exact_limit_nav);
@@ -738,6 +797,9 @@ fn test_nav_precision_scenarios() {
     // Test small precise change
     let current_nav = client.get_nav();
     let precise_nav = current_nav + (current_nav / 100); // Exactly 1% increase
+    // Advance time by 24 hours to allow NAV update
+    advance_time_by_24_hours(&env);
+
     client.set_nav_by_manager(&precise_nav);
 
     assert_eq!(client.get_nav(), precise_nav);
@@ -786,4 +848,125 @@ fn test_error_enum_completeness() {
     assert_eq!(errors[0] as u32, 201);
     assert_eq!(errors[1] as u32, 202);
     assert_eq!(errors[2] as u32, 203);
+}
+
+// ==================== Rate Limiter Tests (24-hour frequency limit) ====================
+
+/// Test that NAV update fails when called within 24 hours
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #205)")]
+fn test_nav_update_within_24_hours_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, vault_client, _) = setup_initialized_oracle(&env);
+    vault_client.set_withdraw_fee_ratio(&500); // 5%
+
+    // Set NAV manager
+    let nav_manager = Address::generate(&env);
+    client.set_nav_manager_by_admin(&nav_manager);
+
+    // First update after 24 hours should succeed
+    advance_time_by_24_hours(&env);
+    client.set_nav_by_manager(&1050000000);
+
+    // Second update immediately should fail (within 24 hours)
+    client.set_nav_by_manager(&1100000000);
+}
+
+/// Test that NAV update succeeds after exactly 24 hours
+#[test]
+fn test_nav_update_after_24_hours_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, vault_client, _) = setup_initialized_oracle(&env);
+    vault_client.set_withdraw_fee_ratio(&500); // 5%
+
+    // Set NAV manager
+    let nav_manager = Address::generate(&env);
+    client.set_nav_manager_by_admin(&nav_manager);
+
+    // First update after 24 hours
+    advance_time_by_24_hours(&env);
+    client.set_nav_by_manager(&1050000000);
+    assert_eq!(client.get_nav(), 1050000000);
+
+    // Second update after another 24 hours should succeed
+    advance_time_by_24_hours(&env);
+    client.set_nav_by_manager(&1102500000); // 5% increase from 1050000000
+    assert_eq!(client.get_nav(), 1102500000);
+}
+
+/// Test get_last_updated_at returns correct timestamp
+#[test]
+fn test_get_last_updated_at() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, vault_client, _) = setup_initialized_oracle(&env);
+    vault_client.set_withdraw_fee_ratio(&500);
+
+    // Check initial timestamp (set during constructor)
+    let initial_timestamp = client.get_last_updated_at();
+    assert!(initial_timestamp >= 0); // Timestamp can be 0 in test environment
+
+    // Set NAV manager and advance time
+    let nav_manager = Address::generate(&env);
+    client.set_nav_manager_by_admin(&nav_manager);
+    advance_time_by_24_hours(&env);
+
+    // Update NAV
+    client.set_nav_by_manager(&1050000000);
+
+    // Check timestamp was updated
+    let updated_timestamp = client.get_last_updated_at();
+    assert!(updated_timestamp > initial_timestamp);
+    assert_eq!(updated_timestamp, initial_timestamp + 86400);
+}
+
+/// Test multiple small NAV updates cannot bypass 24-hour limit
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #205)")]
+fn test_multiple_small_updates_blocked_by_frequency_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, vault_client, _) = setup_initialized_oracle(&env);
+    vault_client.set_withdraw_fee_ratio(&500); // 5%
+
+    // Set NAV manager
+    let nav_manager = Address::generate(&env);
+    client.set_nav_manager_by_admin(&nav_manager);
+
+    // First small update (1% increase) after 24 hours
+    advance_time_by_24_hours(&env);
+    client.set_nav_by_manager(&1010000000);
+
+    // Try second small update (1% increase) immediately
+    // This should fail even though the change is small (within rate limit)
+    // because it violates the 24-hour frequency limit
+    client.set_nav_by_manager(&1020100000);
+}
+
+/// Test NAV update timestamp accuracy
+#[test]
+fn test_timestamp_accuracy() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _, vault_client, _) = setup_initialized_oracle(&env);
+    vault_client.set_withdraw_fee_ratio(&1000); // 10%
+
+    let nav_manager = Address::generate(&env);
+    client.set_nav_manager_by_admin(&nav_manager);
+
+    // Advance time and update NAV
+    advance_time_by_24_hours(&env);
+    let before_update = env.ledger().timestamp();
+    client.set_nav_by_manager(&1100000000);
+    let after_update_timestamp = client.get_last_updated_at();
+
+    // Timestamp should match current ledger time
+    assert_eq!(after_update_timestamp, before_update);
 }
