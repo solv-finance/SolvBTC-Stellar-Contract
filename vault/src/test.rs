@@ -2874,6 +2874,70 @@ fn test_constructor_with_excessive_withdraw_fee_ratio() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #312)")] // InvalidDepositFeeRatio
+fn test_constructor_with_negative_deposit_fee_ratio() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_contract = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
+    let deposit_fee_ratio = -1i128; // Negative deposit fee ratio should panic
+    let withdraw_fee_ratio = 100i128;
+    let withdraw_fee_receiver = Address::generate(&env);
+    let withdraw_currency = Address::generate(&env);
+
+    env.register(
+        SolvBTCVault,
+        (
+            admin,
+            token_contract,
+            oracle,
+            treasurer,
+            withdraw_verifier,
+            deposit_fee_ratio,
+            withdraw_fee_ratio,
+            withdraw_fee_receiver,
+            withdraw_currency,
+        ),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #312)")] // InvalidDepositFeeRatio
+fn test_constructor_with_excessive_deposit_fee_ratio() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_contract = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasurer = Address::generate(&env);
+    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
+    let deposit_fee_ratio = 10001i128; // Exceeds FEE_PRECISION (10000)
+    let withdraw_fee_ratio = 100i128;
+    let withdraw_fee_receiver = Address::generate(&env);
+    let withdraw_currency = Address::generate(&env);
+
+    env.register(
+        SolvBTCVault,
+        (
+            admin,
+            token_contract,
+            oracle,
+            treasurer,
+            withdraw_verifier,
+            deposit_fee_ratio,
+            withdraw_fee_ratio,
+            withdraw_fee_receiver,
+            withdraw_currency,
+        ),
+    );
+}
+
+#[test]
 fn test_deposit_with_zero_fee_ratio() {
     let env = Env::default();
     env.mock_all_auths();
