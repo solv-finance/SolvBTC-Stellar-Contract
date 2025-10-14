@@ -1,6 +1,7 @@
 import pkg from '@stellar/stellar-sdk';
-const { Keypair, hash, nativeToScVal } = pkg;
+const { Keypair, hash, nativeToScVal, Address, xdr } = pkg;
 import { createHash } from 'crypto';
+import { toBufferBE } from 'bigint-buffer';
 import * as bip39 from 'bip39';
 import { derivePath } from 'ed25519-hd-key';
 import { CONFIG } from './config.js';
@@ -15,8 +16,8 @@ import { CONFIG } from './config.js';
  * @param {string} params.targetToken - Target token address
  * @param {BigInt} params.nav - Current NAV value
  * @param {number} params.timestamp - Timestamp
- * @param {string} params.domainName - EIP712 domain name
- * @param {string} params.domainVersion - EIP712 domain version
+ * @param {string} params.domainName - Domain name
+ * @param {string} params.domainVersion - Domain version
  * @param {string} params.chainId - Chain ID
  * @param {string} params.contractAddress - Contract address
  * @returns {Object} Signature result, including signature and request hash
@@ -28,9 +29,9 @@ export async function generateWithdrawSignature(params) {
     targetAmount,
     targetToken,
     nav,
-    timestamp,
-    domainSeparator, // New parameter: directly use the domain separator provided by the contract
-    requestHash      // Use the requestHash from withdraw_request step
+    domainSeparator, // provided by contract
+    requestHash,     // from withdraw_request
+    chainId          // hex string (32 bytes)
   } = params;
 
   console.log("Generating withdraw signature...");
@@ -38,11 +39,13 @@ export async function generateWithdrawSignature(params) {
   console.log("Target amount:", targetAmount.toString());
   console.log("Target token:", targetToken);
   console.log("NAV:", nav.toString());
-  console.log("Timestamp:", timestamp);
   console.log("Using requestHash from withdraw_request:", Buffer.from(requestHash).toString('hex'));
   
   // Use the provided requestHash instead of generating a new one
   
+  // Ensure chainId is hex string
+  const chainIdHex = typeof chainId === 'string' ? chainId : Buffer.from(chainId).toString('hex');
+
   // Create withdraw message
   const withdrawMessage = createWithdrawMessage({
     userAddress,
@@ -50,14 +53,14 @@ export async function generateWithdrawSignature(params) {
     targetToken,
     nav,
     requestHash,
-    timestamp
+    chainId: chainIdHex
   });
   
   // Calculate message hash
   const messageHash = sha256(withdrawMessage);
   
-  // Create EIP712 signature message
-  const eip712Message = createEIP712SignatureMessage(domainSeparator, messageHash);
+  // Create signature message
+  const signatureMessage = createSignatureMessage(domainSeparator, messageHash);
   
   // Choose signing method: either use provided secretKey or derive from mnemonic
   let keypair;
@@ -77,7 +80,9 @@ export async function generateWithdrawSignature(params) {
   const { key } = derivePath(derivationPath, seedHex);
   keypair = Keypair.fromRawEd25519Seed(key);
   console.log('Derived public key:', keypair.publicKey());
-  const signature = keypair.sign(eip712Message);
+  // For Ed25519, we need an additional sha256 hash on the signature message
+  const finalDigest = sha256(signatureMessage);
+  const signature = keypair.sign(finalDigest);
   
   console.log("Signature generated successfully");
   
@@ -90,67 +95,61 @@ export async function generateWithdrawSignature(params) {
 /**
  * Create withdrawal message - ensure complete consistency with create_withdraw_message in vault contract
  */
-function createWithdrawMessage(params) {
+export function createWithdrawMessage(params) {
   const {
-    userAddress,
-    targetAmount,
-    targetToken,
+    userAddress,      // old naming
+    targetAmount,     // old naming
+    targetToken,      // old naming
     nav,
     requestHash,
-    timestamp
+    chainId,
+    action = "withdraw"
   } = params;
-  
+
   // Create a buffer to store all fields
   let buffer = Buffer.alloc(0);
-  
-  // 1. Add user address XDR
-  // Use stellar-sdk's Address to convert to XDR format
+
+  // 1. Add type hash as the first item
+  const typeHash = sha256(Buffer.from("Withdraw(uint256 chainId,string action,address user,address withdrawToken,uint256 shares,uint256 nav,bytes32 requestHash)"));
+  buffer = Buffer.concat([buffer, typeHash]);
+
+  // 2. Add network ID (chain ID) - already 32 bytes
+  buffer = Buffer.concat([buffer, Buffer.from(chainId, 'hex')]);
+
+  // 3. Hash action (dynamic string) before concatenation
+  const actionBytes = Buffer.from("withdraw");
+  const actionHash = sha256(actionBytes);
+  buffer = Buffer.concat([buffer, actionHash]);
+
+  // 4. Hash user address (consistent with calculate_domain_separator)
   const address = new pkg.Address(userAddress);
   const userAddressXDR = nativeToScVal(address).toXDR();
-  buffer = Buffer.concat([buffer, Buffer.from(userAddressXDR)]);
-  
-  // 2. Add target amount (i128 to_be_bytes)
-  const targetAmountBuffer = Buffer.alloc(16); // i128 needs 16 bytes
-  // JavaScript only supports up to 64 bits, so we need special handling
-  // For positive numbers, the high 8 bytes are 0
-  for (let i = 0; i < 8; i++) {
-    targetAmountBuffer[i] = 0;
-  }
-  // Write target amount to the low 8 bytes
-  targetAmountBuffer.writeBigInt64BE(targetAmount, 8);
-  buffer = Buffer.concat([buffer, targetAmountBuffer]);
-  
-  // 3. Add target token XDR
+  const userHash = sha256(Buffer.from(userAddressXDR));
+  buffer = Buffer.concat([buffer, userHash]);
+
+  // 5. Hash target token address (consistent encoding)
   const targetAddress = new pkg.Address(targetToken);
   const targetTokenXDR = nativeToScVal(targetAddress).toXDR();
-  buffer = Buffer.concat([buffer, Buffer.from(targetTokenXDR)]);
-  
-  // 4. Add user hash (same as in contract)
-  const userHash = sha256(requestHash);  // requestHash is already a Buffer
-  buffer = Buffer.concat([buffer, userHash]);
-  
-  // 5. Add NAV value (i128 to_be_bytes)
-  const navBuffer = Buffer.alloc(16); // i128 needs 16 bytes
-  // The high 8 bytes are 0
-  for (let i = 0; i < 8; i++) {
-    navBuffer[i] = 0;
-  }
-  // Write NAV value to the low 8 bytes
-  navBuffer.writeBigInt64BE(nav, 8);
-  buffer = Buffer.concat([buffer, navBuffer]);
-  
-  // 6. Add request hash
-  buffer = Buffer.concat([buffer, requestHash]);  // requestHash is already a Buffer
-  
-  // 7. Add timestamp (u64 to_be_bytes)
-  const timestampBuffer = Buffer.alloc(8);
-  timestampBuffer.writeBigUInt64BE(BigInt(timestamp));
-  buffer = Buffer.concat([buffer, timestampBuffer]);
+  const tokenHash = sha256(Buffer.from(targetTokenXDR));
+  buffer = Buffer.concat([buffer, tokenHash]);
+
+  // 6. Add target amount (shares) as fixed 32-byte representation (i128 -> 16 bytes -> left pad to 32)
+  const targetAmount32 = encodeI128To32Bytes(BigInt(targetAmount));
+  buffer = Buffer.concat([buffer, targetAmount32]);
+
+  // 7. Add NAV value as fixed 32-byte representation (i128 -> 16 bytes -> left pad to 32)
+  const nav32 = encodeI128To32Bytes(BigInt(nav));
+  buffer = Buffer.concat([buffer, nav32]);
+
+  // 8. Hash request_hash (dynamic bytes) before concatenation
+  const requestHashHashed = sha256(requestHash);  // requestHash is already a Buffer
+  buffer = Buffer.concat([buffer, requestHashHashed]);
+
   return buffer;
 }
 
 /**
- * Calculate EIP712 domain separator
+ * Calculate domain separator
  */
 function calculateDomainSeparator(params) {
   const {
@@ -163,8 +162,8 @@ function calculateDomainSeparator(params) {
   // Create a buffer to store all fields
   let buffer = Buffer.alloc(0);
   
-  // 1. EIP712Domain's TypeHash
-  const typeHash = sha256(Buffer.from("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)"));
+  // 1. Domain TypeHash
+  const typeHash = sha256(Buffer.from("Withdraw(uint256 chainId,string action,address user,address withdrawToken,uint256 shares,uint256 nav,bytes32 requestHash)"));
   buffer = Buffer.concat([buffer, typeHash]);
   
   // 2. Domain name hash
@@ -191,13 +190,13 @@ function calculateDomainSeparator(params) {
 }
 
 /**
- * Create EIP712 signature message
+ * Create signature message
  */
-function createEIP712SignatureMessage(domainSeparator, messageHash) {
+function createSignatureMessage(domainSeparator, messageHash) {
   // Create a buffer to store all fields
   let buffer = Buffer.alloc(0);
   
-  // 1. Add EIP712 fixed prefix \x19\x01
+  // 1. Add fixed prefix \x19\x01
   buffer = Buffer.concat([buffer, Buffer.from([0x19, 0x01])]);
   
   // 2. Add domain separator
@@ -216,6 +215,13 @@ function sha256(data) {
   return createHash('sha256').update(data).digest();
 }
 
+// Encode a non-negative BigInt into big-endian byte array of a fixed length
+function encodeI128To32Bytes(value) {
+  const be16 = toBufferBE(BigInt(value), 16);
+  return Buffer.concat([Buffer.alloc(16), be16]);
+}
+
+
 /**
  * Generate random bytes
  */
@@ -232,7 +238,7 @@ function createRandomBytes(length) {
  */
 export async function getDomainSeparator(vaultClient) {
   try {
-    const domainSeparatorOp = await vaultClient.get_eip712_domain_separator();
+    const domainSeparatorOp = await vaultClient.get_domain_separator();
     const domainSeparatorResult = await domainSeparatorOp.simulate();
     return domainSeparatorResult.result;
   } catch (error) {
@@ -246,12 +252,12 @@ export async function getDomainSeparator(vaultClient) {
  */
 export async function getDomainName(vaultClient) {
   try {
-    const domainNameOp = await vaultClient.get_eip712_domain_name();
+    const domainNameOp = await vaultClient.get_domain_name();
     const domainNameResult = await domainNameOp.simulate();
     return domainNameResult.result;
   } catch (error) {
     console.error("Error getting domain name:", error.message);
-    return "SolvBTC Vault"; // Default value
+    return "Solv Vault Withdraw"; // Default value
   }
 }
 
@@ -260,15 +266,15 @@ export async function getDomainName(vaultClient) {
  */
 export async function getDomainVersion(vaultClient) {
   try {
-    const domainVersionOp = await vaultClient.get_eip712_domain_version();
+    const domainVersionOp = await vaultClient.get_domain_version();
     const domainVersionResult = await domainVersionOp.simulate();
     const versionStr = domainVersionResult.result;
-    
+
     // Handle "{string:1}" format version number
     if (typeof versionStr === 'string' && versionStr.startsWith('{string:')) {
       return versionStr.substring(8, versionStr.length - 1);
     }
-    
+
     return versionStr;
   } catch (error) {
     console.error("Error getting domain version:", error.message);
@@ -281,7 +287,7 @@ export async function getDomainVersion(vaultClient) {
  */
 export async function getChainId(vaultClient) {
   try {
-    const chainIdOp = await vaultClient.get_eip712_chain_id();
+    const chainIdOp = await vaultClient.get_chain_id();
     const chainIdResult = await chainIdOp.simulate();
     return chainIdResult.result;
   } catch (error) {

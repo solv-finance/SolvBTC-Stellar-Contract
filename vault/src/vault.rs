@@ -21,11 +21,11 @@ const MAX_CURRENCIES: u32 = 10;
 /// Fee precision (10000 = 100%)
 const FEE_PRECISION: i128 = 10000;
 
-/// EIP712 domain name as bytes
-const EIP712_DOMAIN_NAME_BYTES: &[u8] = b"Solv Vault Withdraw";
+/// Domain name as bytes
+const DOMAIN_NAME_BYTES: &[u8] = b"Solv Vault Withdraw";
 
-/// EIP712 domain version as bytes
-const EIP712_DOMAIN_VERSION_BYTES: &[u8] = b"1";
+/// Domain version as bytes
+const DOMAIN_VERSION_BYTES: &[u8] = b"1";
 
 // ==================== Data Structures ====================
 
@@ -82,7 +82,7 @@ pub enum DataKey {
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[contracttype]
-pub struct EIP712Domain {
+pub struct Domain {
     pub name: String,
     pub version: String,
     pub chain_id: Bytes,
@@ -127,6 +127,8 @@ pub enum VaultError {
     WithdrawVerifierNotSet = 315,
     /// Invalid decimals configuration
     InvalidDecimals = 316,
+    /// Invalid verifier key format or length
+    InvalidVerifierKey = 317,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -291,86 +293,13 @@ impl VaultOperations for SolvBTCVault {
     }
 
     fn withdraw_request(env: Env, from: Address, shares: i128, request_hash: Bytes) {
-        from.require_auth(); // Verify caller identity
-                             // Verify parameters
-        if shares <= 0 {
-            panic_with_error!(env, VaultError::InvalidAmount);
-        }
+        from.require_auth();
+        Self::withdraw_request_internal(&env, &from, shares, &request_hash, false);
+    }
 
-        // Get current nav from oracle
-        let current_nav = Self::get_nav_from_oracle(&env);
-
-        // Get withdraw token address (first supported currency)
-        let withdraw_token: Address = Self::get_withdraw_currency_internal(&env);
-
-        // Generate unique request key: second hash with all parameters (_msgSender, withdrawToken, requestHash, shares, nav)
-        let request_key = Self::generate_request_key(
-            &env,
-            &from,
-            &withdraw_token,
-            &request_hash,
-            shares,
-            current_nav,
-        );
-
-        // Check if request already exists
-        let current_status: WithdrawStatus = env
-            .storage()
-            .persistent()
-            .get(&request_key)
-            .unwrap_or(WithdrawStatus::NotExist);
-
-        if current_status != WithdrawStatus::NotExist {
-            panic_with_error!(env, VaultError::RequestAlreadyExists);
-        }
-
-        // Get token contract address
-        let token_contract: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::TokenContract)
-            .unwrap();
-
-        // Check user has enough shares balance
-        let token_client = TokenClient::new(&env, &token_contract);
-        let user_balance = token_client.balance(&from);
-
-        if user_balance < shares {
-            panic_with_error!(env, VaultError::InsufficientBalance);
-        }
-
-        // Burn user's shares directly via token burn
-        token_client.burn(&from, &shares);
-        // Set withdraw request status to PENDING
-        env.storage()
-            .persistent()
-            .set(&request_key, &WithdrawStatus::Pending);
-
-        // Calculate preview amount for the event using the same formula as withdraw
-        let preview_amount = Self::calculate_withdraw_amount(
-            &env,
-            shares,
-            current_nav,
-            Self::get_shares_token_decimals(&env),
-            Self::get_withdraw_token_decimals(&env),
-            Self::get_nav_decimals_from_oracle(&env),
-        );
-
-        // Emit WithdrawRequest event
-        env.events().publish(
-            (
-                Symbol::new(&env, "withdraw_request"),
-                from.clone(),
-                withdraw_token.clone(),
-            ),
-            WithdrawRequestEvent {
-                token_contract,
-                shares,
-                request_hash,
-                nav: current_nav,
-                amount: preview_amount,
-            },
-        );
+    fn withdraw_request_with_allowance(env: Env, from: Address, shares: i128, request_hash: Bytes) {
+        from.require_auth();
+        Self::withdraw_request_internal(&env, &from, shares, &request_hash, true);
     }
 
     fn withdraw(
@@ -417,14 +346,14 @@ impl VaultOperations for SolvBTCVault {
             panic_with_error!(env, VaultError::InvalidRequestStatus);
         }
 
-        // Create common withdraw message and EIP712 message for both signature types
+        // Create common withdraw message and signature message for both signature types
         let withdraw_message =
             Self::create_withdraw_message(&env, &from, shares, &withdraw_token, nav, &request_hash);
         let message_hash = env.crypto().sha256(&withdraw_message);
-        let eip712_message =
-            Self::create_eip712_signature_message(&env, &Bytes::from(message_hash.clone()));
-        // Hash the EIP712 message to 32-byte digest
-        let digest = env.crypto().sha256(&eip712_message);
+        let signature_message =
+            Self::create_signature_message(&env, &Bytes::from(message_hash.clone()));
+        // Hash the signature message to 32-byte digest
+        let digest = env.crypto().sha256(&signature_message);
 
         // Convert u32 to SignatureType enum
         let sig_type = SignatureType::from_u32(signature_type)
@@ -441,7 +370,7 @@ impl VaultOperations for SolvBTCVault {
                     .get(&DataKey::WithdrawVerifier(SignatureType::Ed25519.to_u32()))
                     .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawVerifierNotSet));
 
-                // Verify EIP712 standard signature (ed25519)
+                // Verify signature with domain standard (ed25519)
                 Self::verify_ed25519_signature(
                     &env,
                     &verifier_public_key,
@@ -654,21 +583,6 @@ impl CurrencyManagement for SolvBTCVault {
         env.storage().instance().get(&DataKey::WithdrawCurrency)
     }
 
-    #[only_owner]
-    fn set_withdraw_currency_by_admin(env: Env, withdraw_currency: Address) {
-        env.storage()
-            .instance()
-            .set(&DataKey::WithdrawCurrency, &withdraw_currency);
-
-        env.events().publish(
-            (
-                Symbol::new(&env, "set_withdraw_currency"),
-                withdraw_currency.clone(),
-            ),
-            Self::get_admin_internal(&env),
-        );
-    }
-
     fn get_shares_token(env: Env) -> Address {
         Self::get_token_contract_internal(&env)
     }
@@ -680,6 +594,29 @@ impl CurrencyManagement for SolvBTCVault {
 impl SystemManagement for SolvBTCVault {
     #[only_owner]
     fn set_withdraw_verifier_by_admin(env: Env, signature_type: u32, verifier_public_key: Bytes) {
+        // Validate signature type and key length
+        let sig_type = SignatureType::from_u32(signature_type)
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidSignatureType));
+
+        match sig_type {
+            SignatureType::Ed25519 => {
+                // Ed25519 public key must be exactly 32 bytes
+                if verifier_public_key.len() != 32 {
+                    panic_with_error!(env, VaultError::InvalidVerifierKey);
+                }
+            }
+            SignatureType::Secp256k1 => {
+                // Secp256k1 uncompressed public key must be exactly 65 bytes
+                if verifier_public_key.len() != 65 {
+                    panic_with_error!(env, VaultError::InvalidVerifierKey);
+                }
+                // Validate uncompressed format: first byte should be 0x04
+                if verifier_public_key.get(0).unwrap_or(0) != 0x04 {
+                    panic_with_error!(env, VaultError::InvalidVerifierKey);
+                }
+            }
+        }
+
         // Store verifier public key based on signature type
         env.storage().instance().set(
             &DataKey::WithdrawVerifier(signature_type),
@@ -818,23 +755,23 @@ impl VaultQuery for SolvBTCVault {
             .unwrap()
     }
 
-    fn get_eip712_domain_name(env: Env) -> String {
+    fn get_domain_name(env: Env) -> String {
         // Convert bytes constant to String
-        String::from_bytes(&env, EIP712_DOMAIN_NAME_BYTES)
+        String::from_bytes(&env, DOMAIN_NAME_BYTES)
     }
 
-    fn get_eip712_domain_version(env: Env) -> String {
+    fn get_domain_version(env: Env) -> String {
         // Convert bytes constant to String
-        String::from_bytes(&env, EIP712_DOMAIN_VERSION_BYTES)
+        String::from_bytes(&env, DOMAIN_VERSION_BYTES)
     }
 
-    fn get_eip712_chain_id(env: Env) -> Bytes {
+    fn get_chain_id(env: Env) -> Bytes {
         let network_id = env.ledger().network_id(); // Return BytesN<32>
                                                     // Directly return network_id, convert to Bytes type
         network_id.into()
     }
 
-    fn get_eip712_domain_separator(env: Env) -> Bytes {
+    fn get_domain_separator(env: Env) -> Bytes {
         Self::calculate_domain_separator(&env)
     }
 
@@ -857,37 +794,54 @@ impl SolvBTCVault {
     ) -> Bytes {
         let mut encoded = Bytes::new(env);
 
-        // Add network ID (chain ID)
+        // 1. Add type hash as the first item
+        let type_hash = env.crypto().sha256(&Bytes::from_slice(env,
+            b"Withdraw(uint256 chainId,string action,address user,address withdrawToken,uint256 shares,uint256 nav,bytes32 requestHash)"));
+        encoded.append(&type_hash.into());
+
+        // 2. Add network ID (chain ID) - already 32 bytes
         let network_id = env.ledger().network_id();
         encoded.append(&network_id.into());
 
-        // Add action (fixed as "withdraw")
+        // 3. Hash action (dynamic string) before concatenation
         let action_bytes = Bytes::from_slice(env, b"withdraw");
-        encoded.append(&action_bytes);
+        let action_hash = env.crypto().sha256(&action_bytes);
+        encoded.append(&action_hash.into());
 
-        // Add user address identifier
-        encoded.append(&_user.to_xdr(env));
+        // 4. Hash user address (consistent with calculate_domain_separator)
+        let user_xdr = _user.to_xdr(env);
+        let user_hash = env.crypto().sha256(&user_xdr);
+        encoded.append(&user_hash.into());
 
-        // Add target currency
-        encoded.append(&target_token.to_xdr(env));
+        // 5. Hash target token address (consistent encoding)
+        let token_xdr = target_token.to_xdr(env);
+        let token_hash = env.crypto().sha256(&token_xdr);
+        encoded.append(&token_hash.into());
 
-        // Add target amount (shares)
-        encoded.append(&Bytes::from_array(env, &target_amount.to_be_bytes()));
+        // 6. Add target amount (shares) as fixed 32-byte representation
+        let mut amount_bytes = [0u8; 32];
+        let amount_be = target_amount.to_be_bytes();
+        amount_bytes[32 - amount_be.len()..].copy_from_slice(&amount_be);
+        encoded.append(&Bytes::from_array(env, &amount_bytes));
 
-        // Add NAV value
-        encoded.append(&Bytes::from_array(env, &nav.to_be_bytes()));
+        // 7. Add NAV value as fixed 32-byte representation
+        let mut nav_bytes = [0u8; 32];
+        let nav_be = nav.to_be_bytes();
+        nav_bytes[32 - nav_be.len()..].copy_from_slice(&nav_be);
+        encoded.append(&Bytes::from_array(env, &nav_bytes));
 
-        // Add request hash
-        encoded.append(request_hash);
+        // 8. Hash request_hash (dynamic bytes) before concatenation
+        let request_hash_hashed = env.crypto().sha256(request_hash);
+        encoded.append(&request_hash_hashed.into());
 
         encoded
     }
 
-    // Create EIP712 standard signature verification message: \x19\x01 + DomainSeparator + MessageHash
-    fn create_eip712_signature_message(env: &Env, message_hash: &Bytes) -> Bytes {
+    // Create signature verification message with domain standard: \x19\x01 + DomainSeparator + MessageHash
+    fn create_signature_message(env: &Env, message_hash: &Bytes) -> Bytes {
         let mut encoded = Bytes::new(env);
 
-        // 1. Add EIP712 fixed prefix \x19\x01
+        // 1. Add fixed prefix \x19\x01
         encoded.append(&Bytes::from_slice(env, &[0x19, 0x01]));
 
         // 2. Calculate and add DomainSeparator
@@ -900,29 +854,29 @@ impl SolvBTCVault {
         encoded
     }
 
-    // Calculate EIP712 DomainSeparator
+    // Calculate domain separator
     fn calculate_domain_separator(env: &Env) -> Bytes {
-        // Implement domain separator calculation according to EIP712 standard
+        // Implement domain separator calculation
         let mut domain_encoded = Bytes::new(env);
 
-        // 1. EIP712Domain's TypeHash
-        // keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)")
+        // 1. Domain TypeHash
+        // sha256 hash of the withdraw message structure
         let type_hash = env.crypto().sha256(&Bytes::from_slice(env,
             b"Withdraw(uint256 chainId,string action,address user,address withdrawToken,uint256 shares,uint256 nav,bytes32 requestHash)"));
         domain_encoded.append(&type_hash.into());
 
         // 2. name field's hash - use constant directly
-        let name_bytes = Bytes::from_slice(env, EIP712_DOMAIN_NAME_BYTES);
+        let name_bytes = Bytes::from_slice(env, DOMAIN_NAME_BYTES);
         let name_hash = env.crypto().sha256(&name_bytes);
         domain_encoded.append(&name_hash.into());
 
         // 3. version field's hash - use constant directly
-        let version_bytes = Bytes::from_slice(env, EIP712_DOMAIN_VERSION_BYTES);
+        let version_bytes = Bytes::from_slice(env, DOMAIN_VERSION_BYTES);
         let version_hash = env.crypto().sha256(&version_bytes);
         domain_encoded.append(&version_hash.into());
 
         // 4. chainId field (32 bytes)
-        let chain_id = Self::get_eip712_chain_id_internal(env);
+        let chain_id = Self::get_chain_id_internal(env);
         domain_encoded.append(&chain_id);
 
         // 5. verifyingContract field's hash
@@ -936,7 +890,7 @@ impl SolvBTCVault {
         let salt = Bytes::from_array(env, &[0u8; 32]);
         domain_encoded.append(&salt);
 
-        // Return domain separator's hash (according to EIP712 standard should use keccak256, but Soroban uses sha256)
+        // Return domain separator's hash (using sha256 as supported by Soroban)
         env.crypto().sha256(&domain_encoded).into()
     }
 
@@ -1130,8 +1084,8 @@ impl SolvBTCVault {
             .unwrap()
     }
 
-    /// Get EIP712 chain ID (internal function)
-    fn get_eip712_chain_id_internal(env: &Env) -> Bytes {
+    /// Get chain ID (internal function)
+    fn get_chain_id_internal(env: &Env) -> Bytes {
         let network_id = env.ledger().network_id(); // Return BytesN<32>
                                                     // Directly return network_id, convert to Bytes type
         network_id.into()
@@ -1224,6 +1178,97 @@ impl SolvBTCVault {
             .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount));
 
         amount
+    }
+
+    /// Internal function to handle withdraw request logic
+    fn withdraw_request_internal(
+        env: &Env,
+        from: &Address,
+        shares: i128,
+        request_hash: &Bytes,
+        use_burn_from: bool,
+    ) {
+        // Verify parameters
+        if shares <= 0 {
+            panic_with_error!(env, VaultError::InvalidAmount);
+        }
+
+        // Get current nav from oracle
+        let current_nav = Self::get_nav_from_oracle(env);
+
+        // Get withdraw token address (first supported currency)
+        let withdraw_token: Address = Self::get_withdraw_currency_internal(env);
+
+        // Generate unique request key: second hash with all parameters (_msgSender, withdrawToken, requestHash, shares, nav)
+        let request_key = Self::generate_request_key(
+            env,
+            from,
+            &withdraw_token,
+            request_hash,
+            shares,
+            current_nav,
+        );
+
+        // Check if request already exists
+        let current_status: WithdrawStatus = env
+            .storage()
+            .persistent()
+            .get(&request_key)
+            .unwrap_or(WithdrawStatus::NotExist);
+
+        if current_status != WithdrawStatus::NotExist {
+            panic_with_error!(env, VaultError::RequestAlreadyExists);
+        }
+
+        // Get token contract address
+        let token_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenContract)
+            .unwrap();
+
+        // Check user has enough shares balance
+        let token_client = TokenClient::new(env, &token_contract);
+        let user_balance = token_client.balance(from);
+
+        if user_balance < shares {
+            panic_with_error!(env, VaultError::InsufficientBalance);
+        }
+
+        // Burn user's shares using the appropriate method
+        if use_burn_from {
+            // Use burn_from with allowance (vault as spender)
+            token_client.burn_from(&env.current_contract_address(), from, &shares);
+        } else {
+            // Use direct burn (requires caller to be the token owner)
+            token_client.burn(from, &shares);
+        }
+
+        // Set withdraw request status to PENDING
+        env.storage()
+            .persistent()
+            .set(&request_key, &WithdrawStatus::Pending);
+
+        // Calculate preview amount for the event using the same formula as withdraw
+        let preview_amount = Self::calculate_withdraw_amount(
+            env,
+            shares,
+            current_nav,
+            Self::get_shares_token_decimals(env),
+            Self::get_withdraw_token_decimals(env),
+            Self::get_nav_decimals_from_oracle(env),
+        );
+
+        env.events().publish(
+            ( Symbol::new(env, "withdraw_request"), from.clone(), withdraw_token.clone()),
+            WithdrawRequestEvent {
+                token_contract,
+                shares,
+                request_hash: request_hash.clone(),
+                nav: current_nav,
+                amount: preview_amount,
+            },
+        );
     }
 }
 
