@@ -79,9 +79,6 @@ pub trait CurrencyManagement {
     /// Get withdrawal currency
     fn get_withdraw_currency(env: Env) -> Option<Address>;
 
-    /// Set withdraw currency by admin
-    fn set_withdraw_currency_by_admin(env: Env, withdraw_currency: Address);
-
     /// Get shares (minted) token contract address
     fn get_shares_token(env: Env) -> Address;
 }
