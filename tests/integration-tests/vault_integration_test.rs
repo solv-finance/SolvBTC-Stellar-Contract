@@ -5,7 +5,7 @@ use fungible_token::FungibleTokenContract;
 use fungible_token::FungibleTokenContractClient;
 use solvbtc_oracle::{SolvBtcOracle, SolvBtcOracleClient};
 use solvbtc_vault::{SolvBTCVault, SolvBTCVaultClient};
-use soroban_sdk::{testutils::Address as _, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
+use soroban_sdk::{testutils::{Address as _, Ledger}, xdr::ToXdr, Address, Bytes, BytesN, Env, String};
 
 /// Contract creation helper functions
 pub fn create_fungible_token<'a>(
@@ -209,7 +209,21 @@ impl VaultTestEnv {
 
     /// Set Oracle NAV value
     fn set_nav_value(&self, nav: i128) {
+        // Advance time by 24 hours to allow NAV update
+        let current_time = self.env.ledger().timestamp();
+        self.env.ledger().with_mut(|li| {
+            li.timestamp = current_time + 86400; // Add 24 hours
+        });
+
         self.get_oracle_client().set_nav_by_manager(&nav);
+    }
+
+    /// Advance time by specified seconds
+    fn advance_time(&self, seconds: u64) {
+        let current_time = self.env.ledger().timestamp();
+        self.env.ledger().with_mut(|li| {
+            li.timestamp = current_time + seconds;
+        });
     }
 
     /// Get user's WBTC balance
