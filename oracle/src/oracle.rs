@@ -147,8 +147,8 @@ impl NavAdminManagement for SolvBtcOracle {
         env.storage().instance().set(&DataKey::Vault, &vault);
 
         env.events().publish(
-            (Symbol::new(&env, "set_vault"), vault.clone()),
-            Self::get_admin_internal(&env),
+            (Symbol::new(&env, "set_vault"),),
+            (Self::get_admin_internal(&env), vault.clone()),
         );
     }
 }
