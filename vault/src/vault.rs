@@ -125,6 +125,8 @@ pub enum VaultError {
     InvalidSignatureType = 314,
     /// Withdraw verifier not set
     WithdrawVerifierNotSet = 315,
+    /// Invalid verifier key format or length
+    InvalidVerifierKey = 316,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -565,6 +567,29 @@ impl CurrencyManagement for SolvBTCVault {
 impl SystemManagement for SolvBTCVault {
     #[only_owner]
     fn set_withdraw_verifier_by_admin(env: Env, signature_type: u32, verifier_public_key: Bytes) {
+        // Validate signature type and key length
+        let sig_type = SignatureType::from_u32(signature_type)
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidSignatureType));
+
+        match sig_type {
+            SignatureType::Ed25519 => {
+                // Ed25519 public key must be exactly 32 bytes
+                if verifier_public_key.len() != 32 {
+                    panic_with_error!(env, VaultError::InvalidVerifierKey);
+                }
+            }
+            SignatureType::Secp256k1 => {
+                // Secp256k1 uncompressed public key must be exactly 65 bytes
+                if verifier_public_key.len() != 65 {
+                    panic_with_error!(env, VaultError::InvalidVerifierKey);
+                }
+                // Validate uncompressed format: first byte should be 0x04
+                if verifier_public_key.get(0).unwrap_or(0) != 0x04 {
+                    panic_with_error!(env, VaultError::InvalidVerifierKey);
+                }
+            }
+        }
+
         // Store verifier public key based on signature type
         env.storage().instance().set(
             &DataKey::WithdrawVerifier(signature_type),
