@@ -2,7 +2,7 @@ use soroban_sdk::{contractclient, contracttype, Address, Bytes, BytesN, Env, Str
 
 // ==================== Deposit and Withdrawal Functions ====================
 
-/// EIP712 signature data structure: withdrawal request
+/// Signature data structure: withdrawal request
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WithdrawRequest {
@@ -133,17 +133,17 @@ pub trait VaultQuery {
     /// Get withdrawal fee receiver
     fn get_withdraw_fee_receiver(env: Env) -> Address;
 
-    /// Get EIP712 domain name
-    fn get_eip712_domain_name(env: Env) -> String;
+    /// Get domain name
+    fn get_domain_name(env: Env) -> String;
 
-    /// Get EIP712 domain version
-    fn get_eip712_domain_version(env: Env) -> String;
+    /// Get domain version
+    fn get_domain_version(env: Env) -> String;
 
-    /// Get EIP712 chain ID
-    fn get_eip712_chain_id(env: Env) -> Bytes;
+    /// Get chain ID
+    fn get_chain_id(env: Env) -> Bytes;
 
-    /// Get EIP712 domain separator
-    fn get_eip712_domain_separator(env: Env) -> Bytes;
+    /// Get domain separator
+    fn get_domain_separator(env: Env) -> Bytes;
 }
 
 // ==================== Event Definitions ====================
