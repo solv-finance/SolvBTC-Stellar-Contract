@@ -2304,7 +2304,7 @@ fn test_withdraw_request_with_allowance_ed25519_success() {
         .get_vault_client()
         .withdraw_request_with_allowance(&test_env.user, &shares, &request_hash);
 
-    // 5) Sign EIP712 message with real ed25519 key
+    // 5) Sign message with real ed25519 key
     let signature = test_env.sign_vault_withdraw_message(
         &test_env.user,
         shares,
@@ -2454,17 +2454,17 @@ fn test_complete_withdraw_with_allowance_operation_flow() {
         "Treasurer should have sufficient WBTC liquidity"
     );
 
-    // Step 6: Verify EIP712 configuration
-    println!("=== Step 6: Verify EIP712 configuration ===");
-    let domain_name = vault_client.get_eip712_domain_name();
-    let domain_version = vault_client.get_eip712_domain_version();
-    let domain_separator = vault_client.get_eip712_domain_separator();
+    // Step 6: Verify domain configuration
+    println!("=== Step 6: Verify domain configuration ===");
+    let domain_name = vault_client.get_domain_name();
+    let domain_version = vault_client.get_domain_version();
+    let domain_separator = vault_client.get_domain_separator();
 
     assert_eq!(domain_name.to_string(), "Solv Vault Withdraw");
     assert_eq!(domain_version.to_string(), "1");
     assert_eq!(domain_separator.len(), 32);
 
-    println!("EIP712 configuration verification:");
+    println!("Domain configuration verification:");
     println!("  Domain name: {}", domain_name.to_string());
     println!("  Domain version: {}", domain_version.to_string());
     println!(
@@ -2502,7 +2502,7 @@ fn test_complete_withdraw_with_allowance_operation_flow() {
     println!("  ✓ Treasurer liquidity preparation normal");
     println!("  ✓ Withdrawal request with allowance creation successful");
     println!("  ✓ Withdrawal parameter preparation complete");
-    println!("  ✓ EIP712 configuration correct");
+    println!("  ✓ Domain configuration correct");
     println!("  ✓ Withdrawal configuration complete");
     println!("  ✓ Signature generation and verification mechanism complete");
     println!("  ✓ All operation functionality verification passed");

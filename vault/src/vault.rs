@@ -159,9 +159,6 @@ impl SolvBTCVault {
         if withdraw_fee_ratio < 0 || withdraw_fee_ratio > FEE_PRECISION {
             panic_with_error!(env, VaultError::InvalidWithdrawFeeRatio);
         }
-        if deposit_fee_ratio < 0 || deposit_fee_ratio > FEE_PRECISION {
-            panic_with_error!(env, VaultError::InvalidDepositFeeRatio);
-        }
 
         // Early validate decimals configuration to prevent unsafe exponentiation/overflow
         let shares_decimals = TokenClient::new(env, &token_contract).decimals();
