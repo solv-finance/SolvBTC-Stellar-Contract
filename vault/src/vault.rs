@@ -74,10 +74,6 @@ pub enum DataKey {
     WithdrawFeeRatio,
     /// Withdraw fee receiver address
     WithdrawFeeReceiver,
-    /// Withdrawal request status
-    WithdrawRequestStatus,
-    /// Used request hash mapping
-    UsedRequestHash(Bytes),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
