@@ -302,42 +302,58 @@ impl VaultTestEnv {
     ) -> Bytes {
         let mut encoded = Bytes::new(&self.env);
 
-        // Add network ID (chain ID)
+        // 1. Add type hash as the first item
+        let type_hash = self.env.crypto().sha256(&Bytes::from_slice(&self.env,
+            b"Withdraw(uint256 chainId,string action,address user,address withdrawToken,uint256 shares,uint256 nav,bytes32 requestHash)"));
+        encoded.append(&type_hash.into());
+
+        // 2. Add network ID (chain ID) - already 32 bytes
         let network_id = self.env.ledger().network_id();
         encoded.append(&network_id.into());
 
-        // Add action (fixed as "withdraw")
+        // 3. Hash action (dynamic string) before concatenation
         let action_bytes = Bytes::from_slice(&self.env, b"withdraw");
-        encoded.append(&action_bytes);
+        let action_hash = self.env.crypto().sha256(&action_bytes);
+        encoded.append(&action_hash.into());
 
-        // Add user address
-        encoded.append(&user_address.clone().to_xdr(&self.env));
+        // 4. Hash user address (consistent with calculate_domain_separator)
+        let user_xdr = user_address.clone().to_xdr(&self.env);
+        let user_hash = self.env.crypto().sha256(&user_xdr);
+        encoded.append(&user_hash.into());
 
-        // Add target currency
+        // 5. Hash target token address (consistent encoding)
+        let token_xdr = target_token.clone().to_xdr(&self.env);
+        let token_hash = self.env.crypto().sha256(&token_xdr);
+        encoded.append(&token_hash.into());
 
-        encoded.append(&target_token.clone().to_xdr(&self.env));
+        // 6. Add target amount (shares) as fixed 32-byte representation
+        let mut amount_bytes = [0u8; 32];
+        let amount_be = target_amount.to_be_bytes();
+        amount_bytes[32 - amount_be.len()..].copy_from_slice(&amount_be);
+        encoded.append(&Bytes::from_array(&self.env, &amount_bytes));
 
-        // Add target amount (shares)
-        encoded.append(&Bytes::from_array(&self.env, &target_amount.to_be_bytes()));
+        // 7. Add NAV value as fixed 32-byte representation
+        let mut nav_bytes = [0u8; 32];
+        let nav_be = nav.to_be_bytes();
+        nav_bytes[32 - nav_be.len()..].copy_from_slice(&nav_be);
+        encoded.append(&Bytes::from_array(&self.env, &nav_bytes));
 
-        // Add NAV value
-        encoded.append(&Bytes::from_array(&self.env, &nav.to_be_bytes()));
-
-        // Add request hash
-        encoded.append(request_hash);
+        // 8. Hash request_hash (dynamic bytes) before concatenation
+        let request_hash_hashed = self.env.crypto().sha256(request_hash);
+        encoded.append(&request_hash_hashed.into());
 
         encoded
     }
 
-    /// Create EIP712 standard signature verification message: \x19\x01 + DomainSeparator + MessageHash
-    fn create_eip712_signature_message(&self, message_hash: &Bytes) -> Bytes {
+    /// Create signature signature verification message: \x19\x01 + DomainSeparator + MessageHash
+    fn create_signature_message(&self, message_hash: &Bytes) -> Bytes {
         let mut encoded = Bytes::new(&self.env);
 
-        // 1. Add EIP712 fixed prefix \x19\x01
+        // 1. Add fixed prefix \x19\x01
         encoded.append(&Bytes::from_slice(&self.env, &[0x19, 0x01]));
 
         // 2. Get and add DomainSeparator
-        let domain_separator = self.get_vault_client().get_eip712_domain_separator();
+        let domain_separator = self.get_vault_client().get_domain_separator();
         encoded.append(&domain_separator);
 
         // 3. Add MessageHash
@@ -346,7 +362,7 @@ impl VaultTestEnv {
         encoded
     }
 
-    /// Use real private key to sign withdraw message - using EIP712 standard
+    /// Use real private key to sign withdraw message - using domain standard
     fn sign_vault_withdraw_message(
         &self,
         user_address: &Address,
@@ -372,12 +388,12 @@ impl VaultTestEnv {
         let message_hash_bytes: Bytes = message_hash.into();
         Self::debug_print_bytes("Message hash", &message_hash_bytes);
 
-        // 3. Create EIP712 standard signature verification message
-        let eip712_message = self.create_eip712_signature_message(&message_hash_bytes);
-        Self::debug_print_bytes("EIP712 message", &eip712_message);
+        // 3. Create signature signature verification message
+        let signature_message = self.create_signature_message(&message_hash_bytes);
+        Self::debug_print_bytes("signature message", &signature_message);
 
-        // 3.5. Ed25519 requires an additional sha256 hash on the eip712_message
-        let digest = self.env.crypto().sha256(&eip712_message);
+        // 3.5. Ed25519 requires an additional sha256 hash on the signature_message
+        let digest = self.env.crypto().sha256(&signature_message);
         let digest_bytes: Bytes = digest.into();
         Self::debug_print_bytes("Final digest for Ed25519", &digest_bytes);
 
@@ -731,13 +747,13 @@ fn test_complete_vault_withdraw_flow() {
 
     let vault_client = test_env.get_vault_client();
 
-    // Verify EIP712 domain information
-    let domain_name = vault_client.get_eip712_domain_name();
-    let domain_version = vault_client.get_eip712_domain_version();
-    let chain_id = vault_client.get_eip712_chain_id();
-    let domain_separator = vault_client.get_eip712_domain_separator();
+    // Verify domain information
+    let domain_name = vault_client.get_domain_name();
+    let domain_version = vault_client.get_domain_version();
+    let chain_id = vault_client.get_chain_id();
+    let domain_separator = vault_client.get_domain_separator();
 
-    println!("EIP712 domain information:");
+    println!("Domain information:");
     println!("   Domain name: {}", domain_name.to_string());
     println!("   Domain version: {}", domain_version.to_string());
     println!("   ChainID length: {} bytes", chain_id.len());
@@ -780,7 +796,7 @@ fn test_complete_vault_withdraw_flow() {
     println!("  ✓ User deposit process normal");
     println!("  ✓ Treasurer liquidity preparation normal");
     println!("  ✓ Withdrawal parameters generation correct");
-    println!("  ✓ EIP712 domain configuration correct");
+    println!("  ✓ Domain configuration correct");
     println!("  ✓ Signature validation process complete");
     println!("  ✓ Contract state query normal");
     println!("  ✓ All contract interactions normal");
@@ -811,20 +827,20 @@ fn test_withdraw_error_scenarios() {
     );
     assert_eq!(invalid_signature.len(), 32); // Verify it's actually invalid length
 
-    // Test case 2: Verify EIP712 function accessibility
-    println!("=== Test 2: EIP712 function accessibility ===");
+    // Test case 2: Verify Domain function accessibility
+    println!("=== Test 2: Domain function accessibility ===");
 
-    let domain_name = vault_client.get_eip712_domain_name();
-    let domain_version = vault_client.get_eip712_domain_version();
-    let chain_id = vault_client.get_eip712_chain_id();
-    let domain_separator = vault_client.get_eip712_domain_separator();
+    let domain_name = vault_client.get_domain_name();
+    let domain_version = vault_client.get_domain_version();
+    let chain_id = vault_client.get_chain_id();
+    let domain_separator = vault_client.get_domain_separator();
 
     assert!(domain_name.len() > 0);
     assert!(domain_version.len() > 0);
     assert_eq!(chain_id.len(), 32);
     assert_eq!(domain_separator.len(), 32);
 
-    println!("✓ EIP712 function accessibility test passed");
+    println!("✓ Domain function accessibility test passed");
 
     // Test case 3: Verify contract initialization state
     println!("=== Test 3: Contract initialization state ===");
@@ -926,21 +942,21 @@ fn test_withdraw_signature_validation_structure() {
     );
     println!("   Currency support status: {} ✓", is_currency_supported);
 
-    // 7. Verify EIP712 domain settings
-    let domain_name = vault_client.get_eip712_domain_name();
+    // 7. Verify domain settings
+    let domain_name = vault_client.get_domain_name();
     println!("domain_name: {:?}", domain_name);
-    let domain_version = vault_client.get_eip712_domain_version();
+    let domain_version = vault_client.get_domain_version();
     println!("domain_version: {:?}", domain_version);
-    let chain_id = vault_client.get_eip712_chain_id();
+    let chain_id = vault_client.get_chain_id();
     println!("chain_id: {:?}", chain_id);
-    let domain_separator = vault_client.get_eip712_domain_separator();
+    let domain_separator = vault_client.get_domain_separator();
     println!("domain_separator: {:?}", domain_separator);
     assert_eq!(domain_name.to_string(), "Solv Vault Withdraw");
     assert_eq!(domain_version.to_string(), "1");
     assert_eq!(chain_id.len(), 32);
     assert_eq!(domain_separator.len(), 32);
 
-    println!("EIP712 domain settings verification:");
+    println!("Domain settings verification:");
     println!("   Domain name: {} ✓", domain_name.to_string());
     println!("   Domain version: {} ✓", domain_version.to_string());
     println!("   ChainID length: {} ✓", chain_id.len());
@@ -954,7 +970,7 @@ fn test_withdraw_signature_validation_structure() {
     println!("Test summary:");
     println!("  ✓ All parameters format correct");
     println!("  ✓ Contract state configuration correct");
-    println!("  ✓ EIP712 domain settings correct");
+    println!("  ✓ Domain settings correct");
     println!("  ✓ Signature validation mechanism works correctly");
     println!("  ✓ Complete withdrawal process structure verification passed");
 }
@@ -1037,7 +1053,7 @@ fn test_withdraw_ed25519_success_integration() {
         .get_vault_client()
         .withdraw_request(&test_env.user, &shares, &request_hash);
 
-    // 5) Sign EIP712 message with real ed25519 key
+    // 5) Sign signature message with real ed25519 key
     let signature = test_env.sign_vault_withdraw_message(
         &test_env.user,
         shares,
@@ -1180,7 +1196,7 @@ fn test_withdraw_secp256k1_wrong_pubkey_should_panic() {
     // Hash the message
     let message_hash = test_env.env.crypto().sha256(&withdraw_message);
 
-    // Create EIP712 message
+    // Create signature message
     let domain_separator = Bytes::from_slice(
         &test_env.env,
         &[
@@ -1190,10 +1206,10 @@ fn test_withdraw_secp256k1_wrong_pubkey_should_panic() {
         ],
     );
     let prefix = Bytes::from_slice(&test_env.env, &[0x19, 0x01]);
-    let mut eip712_message = Bytes::new(&test_env.env);
-    eip712_message.append(&prefix);
-    eip712_message.append(&domain_separator);
-    eip712_message.append(&Bytes::from(message_hash));
+    let mut signature_message = Bytes::new(&test_env.env);
+    signature_message.append(&prefix);
+    signature_message.append(&domain_separator);
+    signature_message.append(&Bytes::from(message_hash));
 
     // Create a valid secp256k1 signature that will recover to a different public key
     // Using a known valid signature (r||s format, 64 bytes total)
@@ -1727,17 +1743,17 @@ fn test_complete_withdraw_operation_flow() {
         "Treasurer should have sufficient WBTC liquidity"
     );
 
-    // Step 6: Verify EIP712 configuration
-    println!("=== Step 6: Verify EIP712 configuration ===");
-    let domain_name = vault_client.get_eip712_domain_name();
-    let domain_version = vault_client.get_eip712_domain_version();
-    let domain_separator = vault_client.get_eip712_domain_separator();
+    // Step 6: Verify Domain configuration
+    println!("=== Step 6: Verify Domain configuration ===");
+    let domain_name = vault_client.get_domain_name();
+    let domain_version = vault_client.get_domain_version();
+    let domain_separator = vault_client.get_domain_separator();
 
     assert_eq!(domain_name.to_string(), "Solv Vault Withdraw");
     assert_eq!(domain_version.to_string(), "1");
     assert_eq!(domain_separator.len(), 32);
 
-    println!("EIP712 configuration verification:");
+    println!("Domain configuration verification:");
     println!("  Domain name: {}", domain_name.to_string());
     println!("  Domain version: {}", domain_version.to_string());
     println!(
@@ -1775,7 +1791,7 @@ fn test_complete_withdraw_operation_flow() {
     println!("  ✓ Treasurer liquidity preparation normal");
     println!("  ✓ Withdrawal request creation successful");
     println!("  ✓ Withdrawal parameter preparation complete");
-    println!("  ✓ EIP712 configuration correct");
+    println!("  ✓ Domain configuration correct");
     println!("  ✓ Withdrawal configuration complete");
     println!("  ✓ Signature generation and verification mechanism complete");
     println!("  ✓ All operation functionality verification passed");
@@ -2103,11 +2119,11 @@ fn test_vault_initialization_with_config() {
     );
     assert_eq!(vault_client.get_withdraw_fee_ratio(), 150);
     assert_eq!(
-        vault_client.get_eip712_domain_name(),
+        vault_client.get_domain_name(),
         String::from_str(&env, "Solv Vault Withdraw")
     );
     assert_eq!(
-        vault_client.get_eip712_domain_version(),
+        vault_client.get_domain_version(),
         String::from_str(&env, "1")
     );
 
@@ -2141,8 +2157,8 @@ fn test_vault_initialization_with_config() {
         vault_client2.get_withdraw_fee_ratio()
     );
     assert_eq!(
-        vault_client.get_eip712_domain_name(),
-        vault_client2.get_eip712_domain_name()
+        vault_client.get_domain_name(),
+        vault_client2.get_domain_name()
     );
 
     println!("✓ Both initialization methods produce identical results!");

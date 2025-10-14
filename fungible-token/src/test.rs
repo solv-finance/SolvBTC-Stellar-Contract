@@ -230,6 +230,63 @@ fn test_burn() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #156)")]
+fn test_burn_from_blacklisted_user_should_panic() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let minter = Address::generate(&env);
+    let client = create_and_init_token(&env, &owner, "BT", "BT", 7);
+
+    // Mint tokens to Alice
+    env.mock_auths(&[MockAuth {
+        address: &owner,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "add_minter_by_manager",
+            args: (&minter,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.add_minter_by_manager(&minter);
+
+    env.mock_auths(&[MockAuth {
+        address: &minter,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "mint_from",
+            args: (&minter, &alice, &100i128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.mint_from(&minter, &alice, &100);
+
+    // Blacklist Alice
+    env.mock_auths(&[MockAuth {
+        address: &owner,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "add_to_blacklist",
+            args: (&owner, &alice).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.add_to_blacklist(&owner, &alice);
+
+    // Alice tries to burn her tokens - should panic due to blacklist
+    env.mock_auths(&[MockAuth {
+        address: &alice,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "burn",
+            args: (&alice, &30i128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.burn(&alice, &30); 
+}
+
+#[test]
 fn test_approve_and_allowance() {
     let env = Env::default();
     env.mock_all_auths();
