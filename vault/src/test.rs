@@ -180,7 +180,6 @@ fn create_vault_contract(env: &Env) -> (SolvBTCVaultClient, Address, Address) {
             oracle,
             treasurer,
             withdraw_verifier,
-            deposit_fee_ratio,
             withdraw_fee_ratio,
             withdraw_fee_receiver,
             withdraw_currency,
@@ -193,8 +192,8 @@ fn create_vault_contract(env: &Env) -> (SolvBTCVaultClient, Address, Address) {
 // add supported currency
 fn add_currency(env: &Env, client: &SolvBTCVaultClient) -> Address {
     env.mock_all_auths();
-    let currency = create_mock_token(env, "Test Currency", "TEST");
-    client.add_currency_by_admin(&currency);
+    let currency = Address::generate(env);
+    client.add_currency_by_admin(&currency, &100); // 100 basis points = 1%
     currency
 }
 
@@ -427,7 +426,7 @@ fn test_withdraw_invalid_signature_content() {
 
     // Use minimal configuration for testing
     let config = initialize_vault_with_defaults(&env, &client);
-    client.add_currency_by_admin(&currency);
+    client.add_currency_by_admin(&currency, &100);
     let fee_receiver = Address::generate(&env);
     client.set_withdraw_fee_recv_by_admin(&fee_receiver);
 
@@ -602,7 +601,7 @@ fn test_withdraw_structure_validation() {
     let config = initialize_vault_with_defaults(&env, &client);
 
     // Add currency
-    client.add_currency_by_admin(&currency);
+    client.add_currency_by_admin(&currency, &100);
     let fee_receiver = Address::generate(&env);
     client.set_withdraw_fee_recv_by_admin(&fee_receiver);
     // Create valid parameters
@@ -652,7 +651,7 @@ fn test_withdraw_with_mock_pubkey() {
 
     // Use new configuration-based initialization
     let config = initialize_vault_with_defaults(&env, &client);
-    client.add_currency_by_admin(&currency);
+    client.add_currency_by_admin(&currency, &100);
     let fee_receiver = Address::generate(&env);
     client.set_withdraw_fee_recv_by_admin(&fee_receiver);
     // Create valid parameters but with mock signature
@@ -778,7 +777,7 @@ fn test_remove_currency_by_admin() {
     let config = initialize_vault_with_defaults(&env, &client);
 
     // Add currency first
-    client.add_currency_by_admin(&currency);
+    client.add_currency_by_admin(&currency, &100);
     assert!(client.is_currency_supported(&currency));
 
     // Remove currency
@@ -803,8 +802,8 @@ fn test_get_supported_currencies() {
     assert_eq!(currencies.len(), 0);
 
     // Add currencies
-    client.add_currency_by_admin(&currency1);
-    client.add_currency_by_admin(&currency2);
+    client.add_currency_by_admin(&currency1, &100);
+    client.add_currency_by_admin(&currency2, &100);
 
     // Verify currencies list
     let currencies = client.get_supported_currencies();
@@ -947,16 +946,15 @@ fn create_vault_with_mocks(env: &Env) -> (SolvBTCVaultClient, Address, Address, 
             oracle_addr.clone(),
             treasurer.clone(),
             verifier.clone(),
-            100i128,
-            100i128,
+            100i128, // withdraw_fee_ratio
             Address::generate(env),
             token_addr.clone(), // Use token as withdraw currency
         ),
     );
     let client = SolvBTCVaultClient::new(env, &contract_address);
 
-    // Configure withdraw settings
-    client.add_currency_by_admin(&token_addr);
+    // Configure withdraw settings and add currency with deposit fee
+    client.add_currency_by_admin(&token_addr, &100);
     client.set_withdraw_fee_recv_by_admin(&Address::generate(env));
     (client, token_addr, oracle_addr, treasurer)
 }
@@ -978,14 +976,13 @@ fn create_vault_with_zero_fee(env: &Env) -> (SolvBTCVaultClient, Address, Addres
             oracle_addr.clone(),
             treasurer.clone(),
             verifier.clone(),
-            100i128,
-            0i128,
+            0i128, // withdraw_fee_ratio = 0
             Address::generate(env),
             token_addr.clone(),
         ),
     );
     let client = SolvBTCVaultClient::new(env, &contract_address);
-    client.add_currency_by_admin(&token_addr);
+    client.add_currency_by_admin(&token_addr, &100);
     client.set_withdraw_fee_recv_by_admin(&Address::generate(env));
     (client, token_addr, oracle_addr, treasurer)
 }
@@ -1005,14 +1002,13 @@ fn create_vault_with_oracle(env: &Env, oracle_addr: Address) -> (SolvBTCVaultCli
             oracle_addr.clone(),
             treasurer.clone(),
             verifier.clone(),
-            100i128,
-            100i128,
+            100i128, // withdraw_fee_ratio
             Address::generate(env),
             token_addr.clone(),
         ),
     );
     let client = SolvBTCVaultClient::new(env, &contract_address);
-    client.add_currency_by_admin(&token_addr);
+    client.add_currency_by_admin(&token_addr, &100);
     (client, token_addr)
 }
 
@@ -1295,8 +1291,8 @@ fn test_treasurer_deposit() {
     let config = initialize_vault_with_defaults(&env, &client);
 
     // Add and set withdraw currency
-    let currency = create_mock_token(&env, "TestCurrency", "TEST");
-    client.add_currency_by_admin(&currency);
+    let currency = Address::generate(&env);
+    client.add_currency_by_admin(&currency, &100);
 
     // This test verifies that the treasurer_deposit function exists and can be called
     // In a real test environment, we would need proper token contracts
@@ -1319,8 +1315,8 @@ fn test_withdraw_request() {
     let config = initialize_vault_with_defaults(&env, &client);
 
     // Add and set withdraw currency
-    let currency = create_mock_token(&env, "TestCurrency", "TEST");
-    client.add_currency_by_admin(&currency);
+    let currency = Address::generate(&env);
+    client.add_currency_by_admin(&currency, &100);
     let fee_receiver = Address::generate(&env);
     client.set_withdraw_fee_recv_by_admin(&fee_receiver);
 
@@ -1348,8 +1344,8 @@ fn test_add_currency_authorization() {
     // Clear authorization records from initialization
     // Don't call env.mock_all_auths() again to test actual authorization
 
-    let currency = create_mock_token(&env, "TestCurrency", "TEST");
-    client.add_currency_by_admin(&currency);
+    let currency = Address::generate(&env);
+    client.add_currency_by_admin(&currency, &100);
 
     // Verify the admin authorization was required
     assert_eq!(
@@ -1360,7 +1356,7 @@ fn test_add_currency_authorization() {
                 function: AuthorizedFunction::Contract((
                     client.address.clone(),
                     Symbol::new(&env, "add_currency_by_admin"),
-                    (currency.clone(),).into_val(&env),
+                    (currency.clone(), 100i128).into_val(&env),
                 )),
                 sub_invocations: std::vec![]
             }
@@ -1379,10 +1375,10 @@ fn test_add_currency_already_exists() {
     let currency = create_mock_token(&env, "TestCurrency", "TEST");
 
     // Add currency first time
-    client.add_currency_by_admin(&currency);
+    client.add_currency_by_admin(&currency, &100);
 
     // Try to add same currency again
-    client.add_currency_by_admin(&currency);
+    client.add_currency_by_admin(&currency, &100);
 }
 
 /// Test remove currency that doesn't exist
@@ -1441,7 +1437,7 @@ fn test_deposit_invalid_amount_zero() {
     let currency = create_mock_token(&env, "TestCurrency", "TEST");
 
     // Add currency first
-    client.add_currency_by_admin(&currency);
+    client.add_currency_by_admin(&currency, &100);
 
     client.deposit(&user, &currency, &0);
 }
@@ -1459,7 +1455,7 @@ fn test_deposit_invalid_amount_negative() {
     let currency = create_mock_token(&env, "TestCurrency", "TEST");
 
     // Add currency first
-    client.add_currency_by_admin(&currency);
+    client.add_currency_by_admin(&currency, &100);
 
     client.deposit(&user, &currency, &-100);
 }
@@ -1532,13 +1528,13 @@ fn test_add_currency_exceeds_max_limit() {
 
     // Add maximum number of currencies (10)
     for _i in 0..10 {
-        let currency = create_mock_token(&env, "TestCurrency", "TEST");
-        client.add_currency_by_admin(&currency);
+        let currency = Address::generate(&env);
+        client.add_currency_by_admin(&currency, &100);
     }
 
     // Try to add one more - should fail
     let extra_currency = Address::generate(&env);
-    client.add_currency_by_admin(&extra_currency);
+    client.add_currency_by_admin(&extra_currency, &100);
 }
 
 /// Test domain domain queries
@@ -1588,7 +1584,7 @@ fn test_is_currency_supported() {
     assert!(!client.is_currency_supported(&currency));
 
     // Add currency
-    client.add_currency_by_admin(&currency);
+    client.add_currency_by_admin(&currency, &100);
 
     // Now should be supported
     assert!(client.is_currency_supported(&currency));
@@ -1673,6 +1669,47 @@ fn test_maximum_fee_ratio_initialization() {
 
 // ==================== Additional Tests for Better Coverage ====================
 
+/// Test deposit function without oracle interface
+#[test]
+#[should_panic(expected = "HostError: Error(Storage, MissingValue)")]
+fn test_deposit_oracle_not_set() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+
+    let user = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    // Add currency first
+    client.add_currency_by_admin(&currency, &100);
+
+    // This should fail because oracle doesn't have proper interface
+    client.deposit(&user, &currency, &1000);
+}
+
+/// Test deposit with zero withdraw fee ratio
+#[test]
+#[should_panic(expected = "HostError: Error(Storage, MissingValue)")]
+fn test_deposit_zero_withdraw_fee_ratio() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+
+    // Initialize with zero fee ratio
+    let _ = create_custom_init_config(&env, None, Some(0));
+
+    let user = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    // Add currency first
+    client.add_currency_by_admin(&currency, &100);
+
+    // This should fail because withdraw fee ratio is 0
+    client.deposit(&user, &currency, &1000);
+}
+
 /// Test withdraw currency queries when none is set
 #[test]
 fn test_withdraw_currency_not_set() {
@@ -1727,14 +1764,14 @@ fn test_currency_supported_function() {
     assert!(!client.is_currency_supported(&currency2));
 
     // Add one currency
-    client.add_currency_by_admin(&currency1);
+    client.add_currency_by_admin(&currency1, &100);
 
     // Now only currency1 should be supported
     assert!(client.is_currency_supported(&currency1));
     assert!(!client.is_currency_supported(&currency2));
 
     // Add second currency
-    client.add_currency_by_admin(&currency2);
+    client.add_currency_by_admin(&currency2, &100);
 
     // Both should be supported
     assert!(client.is_currency_supported(&currency1));
@@ -2433,6 +2470,32 @@ fn test_vault_query_functions_comprehensive() {
 
 // ==================== Additional Core Function Tests ====================
 
+// test_withdraw_missing_withdraw_currency removed:
+// WithdrawCurrency is now set in constructor and cannot be missing
+
+/// Test deposit function with missing oracle (legacy name kept)
+#[test]
+#[should_panic(expected = "HostError: Error(Storage, MissingValue)")]
+fn test_deposit_missing_minter_manager() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+
+    // Add minimal configuration to get past initial validation
+    let admin = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    // Do not set oracle to trigger Storage MissingValue when reading NAV
+    client.set_treasurer_by_admin(&Address::generate(&env));
+    client.set_withdraw_fee_ratio_by_admin(&100);
+    client.set_withdraw_fee_recv_by_admin(&Address::generate(&env));
+    client.add_currency_by_admin(&currency, &100);
+
+    // Try deposit - should fail on minter manager not set
+    client.deposit(&admin, &currency, &1000);
+}
+
 /// Test various error conditions with proper setup
 #[test]
 fn test_error_conditions_comprehensive() {
@@ -2575,9 +2638,9 @@ fn test_currency_management_comprehensive() {
     let currency2 = create_mock_token(&env, "Currency2", "CUR2");
     let currency3 = create_mock_token(&env, "Currency3", "CUR3");
 
-    client.add_currency_by_admin(&currency1);
-    client.add_currency_by_admin(&currency2);
-    client.add_currency_by_admin(&currency3);
+    client.add_currency_by_admin(&currency1, &100);
+    client.add_currency_by_admin(&currency2, &100);
+    client.add_currency_by_admin(&currency3, &100);
 
     // Test getting all supported currencies
     let supported = client.get_supported_currencies();
@@ -2625,7 +2688,6 @@ fn test_set_deposit_fee_ratio_by_admin() {
             oracle.clone(),
             treasurer.clone(),
             withdraw_verifier.clone(),
-            initial_deposit_fee,
             withdraw_fee_ratio,
             withdraw_fee_receiver.clone(),
             withdraw_currency.clone(),
@@ -2633,25 +2695,29 @@ fn test_set_deposit_fee_ratio_by_admin() {
     );
     let client = SolvBTCVaultClient::new(&env, &contract_address);
 
+    // Add currency first with initial fee
+    let currency = Address::generate(&env);
+    client.add_currency_by_admin(&currency, &initial_deposit_fee);
+
     // Check initial deposit fee ratio
-    assert_eq!(client.get_deposit_fee_ratio(), initial_deposit_fee);
+    assert_eq!(client.get_deposit_fee_ratio(&currency), initial_deposit_fee);
 
     // Update deposit fee ratio to 2% (200 basis points)
     let new_deposit_fee = 200i128;
-    client.set_deposit_fee_ratio_by_admin(&new_deposit_fee);
+    client.set_deposit_fee_ratio_by_admin(&currency, &new_deposit_fee);
 
     // Verify the update
-    assert_eq!(client.get_deposit_fee_ratio(), new_deposit_fee);
+    assert_eq!(client.get_deposit_fee_ratio(&currency), new_deposit_fee);
 
     // Test setting maximum allowed fee (100%)
     let max_fee = 10000i128;
-    client.set_deposit_fee_ratio_by_admin(&max_fee);
-    assert_eq!(client.get_deposit_fee_ratio(), max_fee);
+    client.set_deposit_fee_ratio_by_admin(&currency, &max_fee);
+    assert_eq!(client.get_deposit_fee_ratio(&currency), max_fee);
 
     // Test setting zero fee
     let zero_fee = 0i128;
-    client.set_deposit_fee_ratio_by_admin(&zero_fee);
-    assert_eq!(client.get_deposit_fee_ratio(), zero_fee);
+    client.set_deposit_fee_ratio_by_admin(&currency, &zero_fee);
+    assert_eq!(client.get_deposit_fee_ratio(&currency), zero_fee);
 }
 
 #[test]
@@ -2680,7 +2746,6 @@ fn test_set_deposit_fee_ratio_invalid() {
             oracle.clone(),
             treasurer.clone(),
             withdraw_verifier.clone(),
-            deposit_fee_ratio,
             withdraw_fee_ratio,
             withdraw_fee_receiver.clone(),
             withdraw_currency.clone(),
@@ -2688,9 +2753,13 @@ fn test_set_deposit_fee_ratio_invalid() {
     );
     let client = SolvBTCVaultClient::new(&env, &contract_address);
 
+    // Add currency first
+    let currency = Address::generate(&env);
+    client.add_currency_by_admin(&currency, &deposit_fee_ratio);
+
     // Try to set invalid fee ratio (> 10000, which is > 100%)
     let invalid_fee = 10001i128;
-    client.set_deposit_fee_ratio_by_admin(&invalid_fee);
+    client.set_deposit_fee_ratio_by_admin(&currency, &invalid_fee);
 }
 
 #[test]
@@ -2719,7 +2788,6 @@ fn test_set_deposit_fee_ratio_negative() {
             oracle.clone(),
             treasurer.clone(),
             withdraw_verifier.clone(),
-            deposit_fee_ratio,
             withdraw_fee_ratio,
             withdraw_fee_receiver.clone(),
             withdraw_currency.clone(),
@@ -2727,9 +2795,13 @@ fn test_set_deposit_fee_ratio_negative() {
     );
     let client = SolvBTCVaultClient::new(&env, &contract_address);
 
+    // Add currency first
+    let currency = Address::generate(&env);
+    client.add_currency_by_admin(&currency, &deposit_fee_ratio);
+
     // Try to set negative fee ratio
     let negative_fee = -1i128;
-    client.set_deposit_fee_ratio_by_admin(&negative_fee);
+    client.set_deposit_fee_ratio_by_admin(&currency, &negative_fee);
 }
 
 #[test]
@@ -2757,7 +2829,6 @@ fn test_get_deposit_fee_ratio() {
             oracle.clone(),
             treasurer.clone(),
             withdraw_verifier.clone(),
-            deposit_fee_ratio,
             withdraw_fee_ratio,
             withdraw_fee_receiver.clone(),
             withdraw_currency.clone(),
@@ -2765,13 +2836,17 @@ fn test_get_deposit_fee_ratio() {
     );
     let client = SolvBTCVaultClient::new(&env, &contract_address);
 
+    // Add currency first
+    let currency = Address::generate(&env);
+    client.add_currency_by_admin(&currency, &deposit_fee_ratio);
+
     // Test getting deposit fee ratio
-    assert_eq!(client.get_deposit_fee_ratio(), deposit_fee_ratio);
+    assert_eq!(client.get_deposit_fee_ratio(&currency), deposit_fee_ratio);
 
     // Update and verify again
     let new_fee = 500i128; // 5%
-    client.set_deposit_fee_ratio_by_admin(&new_fee);
-    assert_eq!(client.get_deposit_fee_ratio(), new_fee);
+    client.set_deposit_fee_ratio_by_admin(&currency, &new_fee);
+    assert_eq!(client.get_deposit_fee_ratio(&currency), new_fee);
 }
 
 #[test]
@@ -2798,7 +2873,6 @@ fn test_get_token_contract_returns_constructor_value() {
             oracle.clone(),
             treasurer.clone(),
             withdraw_verifier.clone(),
-            deposit_fee_ratio,
             withdraw_fee_ratio,
             withdraw_fee_receiver.clone(),
             withdraw_currency.clone(),
@@ -2833,7 +2907,6 @@ fn test_constructor_with_negative_withdraw_fee_ratio() {
             oracle,
             treasurer,
             withdraw_verifier,
-            deposit_fee_ratio,
             withdraw_fee_ratio,
             withdraw_fee_receiver,
             withdraw_currency,
@@ -2865,7 +2938,6 @@ fn test_constructor_with_excessive_withdraw_fee_ratio() {
             oracle,
             treasurer,
             withdraw_verifier,
-            deposit_fee_ratio,
             withdraw_fee_ratio,
             withdraw_fee_receiver,
             withdraw_currency,
@@ -2892,88 +2964,22 @@ fn test_constructor_with_negative_deposit_fee_ratio() {
     env.register(
         SolvBTCVault,
         (
-            admin,
-            token_contract,
-            oracle,
-            treasurer,
-            withdraw_verifier,
-            deposit_fee_ratio,
-            withdraw_fee_ratio,
-            withdraw_fee_receiver,
-            withdraw_currency,
-        ),
-    );
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #312)")] // InvalidDepositFeeRatio
-fn test_constructor_with_excessive_deposit_fee_ratio() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let token_contract = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    let treasurer = Address::generate(&env);
-    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
-    let deposit_fee_ratio = 10001i128; // Exceeds FEE_PRECISION (10000)
-    let withdraw_fee_ratio = 100i128;
-    let withdraw_fee_receiver = Address::generate(&env);
-    let withdraw_currency = Address::generate(&env);
-
-    env.register(
-        SolvBTCVault,
-        (
-            admin,
-            token_contract,
-            oracle,
-            treasurer,
-            withdraw_verifier,
-            deposit_fee_ratio,
-            withdraw_fee_ratio,
-            withdraw_fee_receiver,
-            withdraw_currency,
-        ),
-    );
-}
-
-#[test]
-fn test_deposit_with_zero_fee_ratio() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    // Create vault with 0 deposit fee ratio (no fee)
-    let admin = Address::generate(&env);
-    let token_contract = create_mock_token(&env, "SolvBTC", "SOLVBTC");
-    let oracle = create_mock_oracle(&env);
-    let treasurer = Address::generate(&env);
-    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
-    let deposit_fee_ratio = 0i128; // 0% fee
-    let withdraw_fee_ratio = 100i128;
-    let withdraw_fee_receiver = Address::generate(&env);
-    let withdraw_currency = create_mock_token(&env, "WBTC", "WBTC");
-
-    let contract_address = env.register(
-        SolvBTCVault,
-        (
             admin.clone(),
             token_contract.clone(),
             oracle.clone(),
             treasurer.clone(),
-            withdraw_verifier.clone(),
-            deposit_fee_ratio,
-            withdraw_fee_ratio,
+            withdraw_verifier.clone(),            withdraw_fee_ratio,
             withdraw_fee_receiver.clone(),
             withdraw_currency.clone(),
         ),
     );
     let client = SolvBTCVaultClient::new(&env, &contract_address);
 
-    // Verify deposit fee ratio is 0
-    assert_eq!(client.get_deposit_fee_ratio(), 0i128);
+    // Add currency with 0 fee
+    client.add_currency_by_admin(&token_contract, &deposit_fee_ratio);
 
-    // Add currency
-    client.add_currency_by_admin(&token_contract);
+    // Verify deposit fee ratio is 0
+    assert_eq!(client.get_deposit_fee_ratio(&token_contract), 0i128);
 
     // Deposit should work with 0 fee (user gets full amount after fee = amount)
     // In real scenario, this would calculate shares correctly with 0 fee

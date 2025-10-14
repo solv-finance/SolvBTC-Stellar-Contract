@@ -64,8 +64,8 @@ pub trait VaultOperations {
 
 /// Currency management trait
 pub trait CurrencyManagement {
-    /// Add currency by admin
-    fn add_currency_by_admin(env: Env, currency: Address);
+    /// Add currency by admin with deposit fee
+    fn add_currency_by_admin(env: Env, currency: Address, deposit_fee_ratio: i128);
 
     /// Remove currency by admin
     fn remove_currency_by_admin(env: Env, currency: Address);
@@ -101,8 +101,8 @@ pub trait SystemManagement {
     /// Set withdrawal fee ratio by admin
     fn set_withdraw_fee_ratio_by_admin(env: Env, withdraw_fee_ratio: i128);
 
-    /// Set deposit fee ratio by admin
-    fn set_deposit_fee_ratio_by_admin(env: Env, deposit_fee_ratio: i128);
+    /// Set deposit fee ratio for a currency by admin
+    fn set_deposit_fee_ratio_by_admin(env: Env, currency: Address, deposit_fee_ratio: i128);
 
     /// Set withdraw fee receiver by admin
     fn set_withdraw_fee_recv_by_admin(env: Env, withdraw_fee_receiver: Address);
@@ -128,8 +128,8 @@ pub trait VaultQuery {
     /// Get withdrawal fee ratio
     fn get_withdraw_fee_ratio(env: Env) -> i128;
 
-    /// Get deposit fee ratio
-    fn get_deposit_fee_ratio(env: Env) -> i128;
+    /// Get deposit fee ratio for a specific currency
+    fn get_deposit_fee_ratio(env: Env, currency: Address) -> i128;
 
     /// Get withdrawal fee receiver
     fn get_withdraw_fee_receiver(env: Env) -> Address;
