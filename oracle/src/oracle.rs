@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, BytesN, Env,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env,
     Symbol,
 };
 use stellar_default_impl_macro::default_impl;
@@ -8,7 +8,6 @@ use stellar_ownable_macro::only_owner;
 use stellar_upgradeable::UpgradeableInternal;
 use stellar_upgradeable_macros::Upgradeable;
 
-use crate::dependencies::VaultClient;
 pub use crate::traits::{NavAdminManagement, NavManagerManagement, NavQuery};
 
 // ==================== Constants Definition ====================
@@ -18,6 +17,12 @@ const MAX_NAV_DECIMALS: u32 = 18;
 
 /// Seconds per day (24 hours)
 const SECONDS_PER_DAY: u64 = 86400;
+
+/// Basis points precision (10000 = 100%)
+const BASIS_POINTS_PRECISION: i128 = 10000;
+
+/// Maximum NAV change limit in basis points (5 = 0.05%)
+const MAX_NAV_CHANGE_BASIS_POINTS: i128 = 5;
 
 // ==================== Error Type Definition ====================
 
@@ -180,16 +185,11 @@ impl NavManagerManagement for SolvBtcOracle {
             panic_with_error!(&env, OracleError::NavUpdateTooFrequent);
         }
 
-        //Check new nav only increase or equal prev NAV ( >=)
+        // Get current NAV
         let current_nav: i128 = env.storage().instance().get(&DataKey::Nav).unwrap();
 
-        //The growth rate between the set NAV and the previous NAV must not exceed the Vault’s withdraw fee rate
-        let vault: Address = env.storage().instance().get(&DataKey::Vault).unwrap();
-        //Get vault withdraw fee rate
-        let withdraw_fee_rate: i128 = VaultClient::new(&env, &vault).get_withdraw_fee_ratio();
-
-        // Check if NAV change exceeds limit
-        Self::check_nav_change(&env, current_nav, nav, withdraw_fee_rate);
+        // Check if NAV change exceeds limit (±0.05%)
+        Self::check_nav_change(&env, current_nav, nav);
 
         // Update NAV value
         env.storage().instance().set(&DataKey::Nav, &nav);
@@ -230,17 +230,16 @@ impl SolvBtcOracle {
         nav_manager
     }
 
-    /// Validate if NAV change is within allowed range based on precision (internal function)
-    fn check_nav_change(env: &Env, current_nav: i128, new_nav: i128, withdraw_fee_rate: i128) {
-        // Calculate change increase or equal prev NAV
+    /// Validate if NAV change is within allowed range (±0.05%)
+    fn check_nav_change(env: &Env, current_nav: i128, new_nav: i128) {
+        // Calculate absolute change
         let change = new_nav - current_nav;
-        if change < 0 {
-            panic_with_error!(env, OracleError::InvalidArgument);
-        }
-        // The growth rate between the set NAV and the previous NAV must not exceed the Vault’s withdraw fee rate
-        let change_percent = change * 10000 / current_nav;
+        let abs_change = if change < 0 { -change } else { change };
 
-        if change_percent > withdraw_fee_rate {
+        // Check if change exceeds maximum allowed limit
+        // abs_change / current_nav > MAX_NAV_CHANGE_BASIS_POINTS / BASIS_POINTS_PRECISION
+        // Rearranged to: abs_change * BASIS_POINTS_PRECISION > current_nav * MAX_NAV_CHANGE_BASIS_POINTS
+        if abs_change * BASIS_POINTS_PRECISION > current_nav * MAX_NAV_CHANGE_BASIS_POINTS {
             panic_with_error!(env, OracleError::NavChangeExceedsLimit);
         }
     }

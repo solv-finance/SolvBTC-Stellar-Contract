@@ -519,7 +519,7 @@ fn test_complete_vault_deposit_flow() {
 
     // 5. Prepare test data
     let deposit_amount = 100_000_000i128; // 1 WBTC (8 decimal places)
-    let nav_value = 120_000_000i128; // 1.2 NAV (8 decimal places)
+    let nav_value = 100_050_000i128; // 1.0005 NAV (8 decimal places) - 0.05% increase
 
     // 5. Mint test WBTC to user
     println!("Minting {} WBTC to user...", deposit_amount);
@@ -625,11 +625,11 @@ fn test_different_nav_values() {
 
     let deposit_amount = 50_000_000i128; // 0.5 WBTC
 
-    // Test different NAV values (small changes within 1% fee limit)
+    // Test different NAV values (small changes within 0.05% limit)
     let test_cases = vec![
-        (100_000_000i128, "1.0"),   // NAV = 1.0 (baseline)
-        (100_500_000i128, "1.005"), // NAV = 1.005 (0.5% increase)
-        (100_800_000i128, "1.008"), // NAV = 1.008 (0.8% increase)
+        (100_000_000i128, "1.0"),       // NAV = 1.0 (baseline)
+        (100_050_000i128, "1.0005"),    // NAV = 1.0005 (0.05% increase)
+        (100_045_000i128, "1.00045"),   // NAV = 1.00045 (0.045% increase from baseline)
     ];
 
     for (nav_value, nav_desc) in test_cases {
@@ -1415,11 +1415,11 @@ fn test_deposit_operation_comprehensive() {
         .get_vault_client()
         .set_withdraw_fee_ratio_by_admin(&2500i128); // 25%
 
-    // Test various deposit scenarios (NAV can only increase, not decrease)
+    // Test various deposit scenarios with NAV within ±0.05% limit
     let test_cases = vec![
         (50_000_000i128, 100_000_000i128, "0.5 WBTC at 1.0 NAV"),
-        (100_000_000i128, 120_000_000i128, "1.0 WBTC at 1.2 NAV"),
-        (200_000_000i128, 125_000_000i128, "2.0 WBTC at 1.25 NAV"),
+        (100_000_000i128, 100_050_000i128, "1.0 WBTC at 1.0005 NAV"),  // 0.05% increase
+        (200_000_000i128, 100_045_000i128, "2.0 WBTC at 1.00045 NAV"), // 0.045% increase from baseline
     ];
 
     for (deposit_amount, nav_value, description) in test_cases {
@@ -1835,7 +1835,7 @@ fn test_all_four_operations_integration() {
     // Operation 1: User deposit (deposit)
     println!("1. Testing user deposit operation (deposit)");
     let deposit_amount = 150_000_000i128; // 1.5 WBTC
-    let nav_value = 110_000_000i128; // 1.1 NAV
+    let nav_value = 100_050_000i128; // 1.0005 NAV (0.05% increase)
 
     test_env.mint_wbtc_to_user(deposit_amount);
     test_env.approve_vault_for_wbtc(deposit_amount);
