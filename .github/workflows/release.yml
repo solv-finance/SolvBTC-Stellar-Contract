@@ -1,0 +1,44 @@
+name: Stellar Expert WASM Release
+
+# Required permissions for GitHub Attestations
+permissions:
+  id-token: write      
+  contents: write      
+  attestations: write  
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0, v1.0.1, etc.
+
+
+jobs:
+  # Build and release fungible token contract
+  release-contract-fungible-token:
+    uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@main
+    with:
+      release_name: ${{ github.ref_name }}
+      release_description: 'SolvBTC Fungible Token Contract Release'
+      package: 'fungible-token'
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build and release oracle contract
+  release-contract-oracle:
+    uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@main
+    with:
+      release_name: ${{ github.ref_name }}
+      release_description: 'SolvBTC Oracle Contract Release'
+      package: 'solvbtc-oracle'
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build and release vault contract
+  release-contract-vault:
+    uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@main
+    with:
+      release_name: ${{ github.ref_name }}
+      release_description: 'SolvBTC Vault Contract Release'
+      package: 'solvbtc-vault'
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}
