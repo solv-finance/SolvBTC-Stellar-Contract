@@ -17,12 +17,12 @@ stellar-ownable-macro = { git = "https://github.com/OpenZeppelin/stellar-contrac
 stellar-default-impl-macro = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", tag = "v0.3.0" }
 stellar-upgradeable = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", tag = "v0.3.0" }
 stellar-upgradeable-macros = { git = "https://github.com/OpenZeppelin/stellar-contracts.git", tag = "v0.3.0" }
-ed25519-dalek = { workspace = true }
-sha3 = { workspace = true }
-hex = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+ed25519-dalek = { workspace = true }
+sha3 = { workspace = true }
+hex = { workspace = true }
 rand = { workspace = true }
 stellar-strkey = { workspace = true }
 heapless = { workspace = true }
