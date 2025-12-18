@@ -133,18 +133,6 @@ pub trait VaultQuery {
 
     /// Get withdrawal fee receiver
     fn get_withdraw_fee_receiver(env: Env) -> Address;
-
-    /// Get domain name
-    fn get_domain_name(env: Env) -> String;
-
-    /// Get domain version
-    fn get_domain_version(env: Env) -> String;
-
-    /// Get chain ID
-    fn get_chain_id(env: Env) -> Bytes;
-
-    /// Get domain separator
-    fn get_domain_separator(env: Env) -> Bytes;
 }
 
 // ==================== Event Definitions ====================
