@@ -4,6 +4,7 @@ members = [
     "oracle",
     "vault",
     "tests",
+    "bridge",
 ]
 resolver = "2"
 
