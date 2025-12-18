@@ -218,7 +218,6 @@ fn test_mint_success() {
         &btc_amount_str,
         &nav,
         &nav_str,
-        &token.address
     );
 
     // Verify Event
@@ -271,7 +270,6 @@ fn test_mint_accepts_hex_string_btc_tx_hash() {
         &btc_amount_str,
         &nav,
         &nav_str,
-        &token.address,
     );
 }
 
@@ -292,7 +290,6 @@ fn test_mint_invalid_amount() {
         &Bytes::from_slice(&env, b"0"),
         &100,
         &Bytes::from_slice(&env, b"1"),
-        &token.address
     );
 }
 
@@ -312,28 +309,6 @@ fn test_mint_invalid_nav() {
         &Bytes::from_slice(&env, b"1"),
         &0, // Nav 0
         &Bytes::from_slice(&env, b"0"),
-        &token.address
-    );
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #404)")] // TokenNotSupported
-fn test_mint_wrong_token() {
-    let (env, bridge, _admin, _token, _oracle, user) = create_test_setup();
-    let wrong_token = Address::generate(&env);
-    
-    let signature = BytesN::from_array(&env, &[0u8; 65]);
-    let btc_tx_hash = Bytes::from_slice(&env, &[0u8; 64]); // 64-byte hex string
-    
-    bridge.mint(
-        &user,
-        &signature,
-        &btc_tx_hash,
-        &100,
-        &Bytes::from_slice(&env, b"1"),
-        &100,
-        &Bytes::from_slice(&env, b"1"),
-        &wrong_token
     );
 }
 
@@ -353,7 +328,6 @@ fn test_mint_invalid_btc_tx_hash_length() {
         &Bytes::from_slice(&env, b"1"),
         &100,
         &Bytes::from_slice(&env, b"1"),
-        &token.address,
     );
 }
 
@@ -392,10 +366,10 @@ fn test_mint_replay() {
     let signature = sign_message(&env, &secret_key, &message);
 
     // 1st Mint
-    bridge.mint(&user, &signature, &btc_tx_hash, &btc_amount, &btc_amount_str, &nav, &nav_str, &token.address);
+    bridge.mint(&user, &signature, &btc_tx_hash, &btc_amount, &btc_amount_str, &nav, &nav_str);
     
     // 2nd Mint (Replay)
-    bridge.mint(&user, &signature, &btc_tx_hash, &btc_amount, &btc_amount_str, &nav, &nav_str, &token.address);
+    bridge.mint(&user, &signature, &btc_tx_hash, &btc_amount, &btc_amount_str, &nav, &nav_str);
 }
 
 #[test]
@@ -431,7 +405,7 @@ fn test_mint_cap_exceeded() {
     );
     let signature = sign_message(&env, &secret_key, &message);
 
-    bridge.mint(&user, &signature, &btc_tx_hash, &btc_amount, &btc_amount_str, &nav, &nav_str, &token.address);
+    bridge.mint(&user, &signature, &btc_tx_hash, &btc_amount, &btc_amount_str, &nav, &nav_str);
 }
 
 #[test]
@@ -465,7 +439,7 @@ fn test_mint_unauthorized_signer() {
     );
     let signature = sign_message(&env, &secret_key, &message);
 
-    bridge.mint(&user, &signature, &btc_tx_hash, &btc_amount, &btc_amount_str, &nav, &nav_str, &token.address);
+    bridge.mint(&user, &signature, &btc_tx_hash, &btc_amount, &btc_amount_str, &nav, &nav_str);
 }
 
 #[test]
@@ -506,7 +480,7 @@ fn test_mint_nav_outdated() {
     );
     let signature = sign_message(&env, &secret_key, &message);
 
-    bridge.mint(&user, &signature, &btc_tx_hash, &btc_amount, &btc_amount_str, &nav, &nav_str, &token.address);
+    bridge.mint(&user, &signature, &btc_tx_hash, &btc_amount, &btc_amount_str, &nav, &nav_str);
 }
 
 #[test]
@@ -520,7 +494,7 @@ fn test_redeem_success() {
     let amount = 100_000_000i128; // 1 token
     let receiver = Bytes::from_slice(&env, b"tb1qgj9lq5xse06hgwhv5wrch6g70nmp0jnn22jvr9");
     
-    bridge.redeem(&user, &token.address, &amount, &receiver);
+    bridge.redeem(&user, &amount, &receiver);
 
     let events = env.events().all();
     let last_event = events.last().unwrap();
@@ -531,15 +505,7 @@ fn test_redeem_success() {
 #[should_panic(expected = "Error(Contract, #401)")]
 fn test_redeem_invalid_amount() {
     let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
-    bridge.redeem(&user, &token.address, &0, &Bytes::new(&env));
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #404)")]
-fn test_redeem_wrong_token() {
-    let (env, bridge, _admin, _token, _oracle, user) = create_test_setup();
-    let wrong_token = Address::generate(&env);
-    bridge.redeem(&user, &wrong_token, &100, &Bytes::new(&env));
+    bridge.redeem(&user, &0, &Bytes::new(&env));
 }
 
 #[test]
@@ -547,7 +513,7 @@ fn test_redeem_wrong_token() {
 fn test_redeem_invalid_btc_receiver_address() {
     let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
     let receiver = Bytes::from_slice(&env, b"xQ7Z9p2RfKb3Vd8WsYh4Jn6Mc1EtGg5HjL0SrTiUoXaBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890aBcDeFgHiJkLmNoPqRsTuVwXyZ987654321");
-    bridge.redeem(&user, &token.address, &100, &receiver);
+    bridge.redeem(&user, &100, &receiver);
 }
 
 #[test]
@@ -885,7 +851,6 @@ fn test_mint_invalid_signature_recovery_id() {
         &btc_amount_str,
         &nav,
         &nav_str,
-        &token.address
     );
 }
 

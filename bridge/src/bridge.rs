@@ -95,7 +95,6 @@ impl BridgeOperations for SolvBTCBridge {
         btc_amount_str: Bytes,
         nav: i128,
         nav_str: Bytes,
-        token_address: Address,
     ) {
         from.require_auth();
 
@@ -117,13 +116,7 @@ impl BridgeOperations for SolvBTCBridge {
             panic_with_error!(&env, BridgeError::InvalidData);
         }
 
-        // 2. Check Token
-        let stored_token: Address = env.storage().instance().get(&BridgeDataKey::Token).unwrap();
-        if token_address != stored_token {
-            panic_with_error!(&env, BridgeError::TokenNotSupported);
-        }
-      
-        // 3. Check if the BTC tx hash has been used
+        // 2. Check if the BTC tx hash has been used
         if env
             .storage()
             .persistent()
@@ -132,6 +125,9 @@ impl BridgeOperations for SolvBTCBridge {
             panic_with_error!(&env, BridgeError::TxAlreadyUsed);
         }
 
+        // 3. Get token address
+        let token_address: Address = env.storage().instance().get(&BridgeDataKey::Token).unwrap();
+      
         // 4. OP_RETURN Hash: Computed on-chain to prevent spoofing
         // keccak256("stellar" + token_address + user_address)
         let op_return_hash = Self::compute_op_return_hash(&env, &token_address, &from);
@@ -214,7 +210,6 @@ impl BridgeOperations for SolvBTCBridge {
     fn redeem(
         env: Env,
         from: Address,
-        token_address: Address,
         amount: i128,
         receiver: Bytes,
     ) {
@@ -222,12 +217,6 @@ impl BridgeOperations for SolvBTCBridge {
 
         if amount <= 0 {
             panic_with_error!(&env, BridgeError::InvalidAmount);
-        }
-
-        // Check Token
-        let stored_token: Address = env.storage().instance().get(&BridgeDataKey::Token).unwrap();
-        if token_address != stored_token {
-            panic_with_error!(&env, BridgeError::TokenNotSupported);
         }
 
         if receiver.len() == 0 || receiver.len() > MAX_BTC_RECEIVER_LENGTH as u32 {
@@ -241,6 +230,7 @@ impl BridgeOperations for SolvBTCBridge {
         let nav_decimals = oracle_client.get_nav_decimals();
 
         // Burn Tokens
+        let token_address: Address = env.storage().instance().get(&BridgeDataKey::Token).unwrap();
         let token_client = TokenClient::new(&env, &token_address);
         token_client.burn_from(&env.current_contract_address(), &from, &amount);
         let shares_decimals = token_client.decimals();

@@ -14,14 +14,12 @@ pub trait BridgeOperations {
         btc_amount_str: Bytes,
         nav: i128,
         nav_str: Bytes,
-        token_address: Address,
     );
 
     /// Redeem SolvBTC
     fn redeem(
         env: Env,
         from: Address,
-        token_address: Address,
         amount: i128,
         receiver: Bytes,
     );
