@@ -105,10 +105,9 @@ pub enum BridgeError {
     TxAlreadyUsed = 405,
     InvalidSignature = 406,
     SignerCapExceeded = 407,
-    AllowPushDisabled = 408,
+    InvalidData = 408,
     InvalidSignerKey = 409,
     NavOutOfRange = 410,
     InvalidDecimals = 411,
     InvalidAddress = 412,
-    InvalidData = 413,
 }

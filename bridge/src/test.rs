@@ -182,7 +182,7 @@ fn test_mint_success() {
     bridge.set_signer_cap(&signer_key, &cap);
 
     // 2. Prepare Data
-    let btc_tx_hash = Bytes::from_slice(&env, &[0xab; 32]);
+    let btc_tx_hash = Bytes::from_slice(&env, &[0xab; 64]); // 64-byte hex string
     let btc_amount = 100_000_000i128; // 1 BTC
     let btc_amount_str = Bytes::from_slice(&env, b"1.0");
     let nav = 100_000_000i128; // 1.0
@@ -231,13 +231,58 @@ fn test_mint_success() {
 }
 
 #[test]
+fn test_mint_accepts_hex_string_btc_tx_hash() {
+    let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
+
+    let (secret_key, public_key) = generate_keypair();
+    let signer_key = get_signer_cap_key(&env, &public_key);
+    bridge.set_signer_cap(&signer_key, &1_000_000_000_000_000_000_000i128);
+
+    // 64-byte hex string (UTF-8 bytes)
+    let btc_tx_hash = Bytes::from_slice(
+        &env,
+        b"c83c3cb20fc2b222a2707033ae52995454fcc3f70803c5ca33ebbafb5fd00687",
+    );
+    let btc_amount = 100_000_000i128;
+    let btc_amount_str = Bytes::from_slice(&env, b"1.0");
+    let nav = 100_000_000i128;
+    let nav_str = Bytes::from_slice(&env, b"1.0");
+
+    let op_return_hash = SolvBTCBridge::compute_op_return_hash(&env, &token.address, &user);
+    let op_hash_hex = SolvBTCBridge::op_return_hash_to_hex_string_bytes(&env, &op_return_hash);
+    let message = SolvBTCBridge::build_mint_message(
+        &env,
+        &btc_tx_hash,
+        &btc_amount_str,
+        btc_amount,
+        &op_hash_hex,
+        &nav_str,
+        nav,
+        &user,
+        &token.address,
+    );
+    let signature = sign_message(&env, &secret_key, &message);
+
+    bridge.mint(
+        &user,
+        &signature,
+        &btc_tx_hash,
+        &btc_amount,
+        &btc_amount_str,
+        &nav,
+        &nav_str,
+        &token.address,
+    );
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #401)")] // InvalidAmount
 fn test_mint_invalid_amount() {
     let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
     
     // Dummy data
     let signature = BytesN::from_array(&env, &[0u8; 65]);
-    let btc_tx_hash = Bytes::from_slice(&env, &[0u8; 32]);
+    let btc_tx_hash = Bytes::from_slice(&env, &[0u8; 64]); // 64-byte hex string
     
     bridge.mint(
         &user,
@@ -257,7 +302,7 @@ fn test_mint_invalid_nav() {
     let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
     
     let signature = BytesN::from_array(&env, &[0u8; 65]);
-    let btc_tx_hash = Bytes::from_slice(&env, &[0u8; 32]);
+    let btc_tx_hash = Bytes::from_slice(&env, &[0u8; 64]); // 64-byte hex string
     
     bridge.mint(
         &user,
@@ -278,7 +323,7 @@ fn test_mint_wrong_token() {
     let wrong_token = Address::generate(&env);
     
     let signature = BytesN::from_array(&env, &[0u8; 65]);
-    let btc_tx_hash = Bytes::from_slice(&env, &[0u8; 32]);
+    let btc_tx_hash = Bytes::from_slice(&env, &[0u8; 64]); // 64-byte hex string
     
     bridge.mint(
         &user,
@@ -293,6 +338,26 @@ fn test_mint_wrong_token() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #408)")] // InvalidData
+fn test_mint_invalid_btc_tx_hash_length() {
+    let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
+
+    let signature = BytesN::from_array(&env, &[0u8; 65]);
+    let btc_tx_hash = Bytes::from_slice(&env, &[0u8; 32]);
+
+    bridge.mint(
+        &user,
+        &signature,
+        &btc_tx_hash,
+        &100,
+        &Bytes::from_slice(&env, b"1"),
+        &100,
+        &Bytes::from_slice(&env, b"1"),
+        &token.address,
+    );
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #405)")] // TxAlreadyUsed
 fn test_mint_replay() {
     let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
@@ -303,7 +368,7 @@ fn test_mint_replay() {
     // Large cap so replay test is not blocked by cap
     bridge.set_signer_cap(&signer_key, &1_000_000_000_000_000_000_000i128);
 
-    let btc_tx_hash = Bytes::from_slice(&env, &[0x11; 32]);
+    let btc_tx_hash = Bytes::from_slice(&env, &[0x11; 64]); // 64-byte hex string
     let btc_amount = 100_000_000i128;
     let btc_amount_str = Bytes::from_slice(&env, b"1.0");
     let nav = 100_000_000i128;
@@ -343,7 +408,7 @@ fn test_mint_cap_exceeded() {
     // Cap = 1 satoshi
     bridge.set_signer_cap(&signer_key, &1);
 
-    let btc_tx_hash = Bytes::from_slice(&env, &[0x22; 32]);
+    let btc_tx_hash = Bytes::from_slice(&env, &[0x22; 64]); // 64-byte hex string
     let btc_amount = 100_000_000i128; // 1 BTC
     let btc_amount_str = Bytes::from_slice(&env, b"1.0");
     let nav = 100_000_000i128;
@@ -377,7 +442,7 @@ fn test_mint_unauthorized_signer() {
     // Key generated but NOT added to bridge
     let (secret_key, _public_key) = generate_keypair();
     
-    let btc_tx_hash = Bytes::from_slice(&env, &[0x33; 32]);
+    let btc_tx_hash = Bytes::from_slice(&env, &[0x33; 64]); // 64-byte hex string
     let btc_amount = 100_000_000i128; 
     let btc_amount_str = Bytes::from_slice(&env, b"1.0");
     let nav = 100_000_000i128;
@@ -420,7 +485,7 @@ fn test_mint_nav_outdated() {
     let nav = 102_000_000i128; // 1.02
     let nav_str = Bytes::from_slice(&env, b"1.02");
     
-    let btc_tx_hash = Bytes::from_slice(&env, &[0x44; 32]);
+    let btc_tx_hash = Bytes::from_slice(&env, &[0x44; 64]); // 64-byte hex string
     let mut op_input = Bytes::new(&env);
     op_input.append(&Bytes::from_slice(&env, b"stellar"));
     op_input.append(&SolvBTCBridge::address_to_bytes(&env, &token.address));
@@ -448,6 +513,9 @@ fn test_mint_nav_outdated() {
 fn test_redeem_success() {
     let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
     
+    // Set token decimals to 8 
+    token.set_token_decimals(&8);
+
     // Redeem
     let amount = 100_000_000i128; // 1 token
     let receiver = Bytes::from_slice(&env, b"tb1qgj9lq5xse06hgwhv5wrch6g70nmp0jnn22jvr9");
@@ -475,6 +543,14 @@ fn test_redeem_wrong_token() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #412)")]
+fn test_redeem_invalid_btc_receiver_address() {
+    let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
+    let receiver = Bytes::from_slice(&env, b"xQ7Z9p2RfKb3Vd8WsYh4Jn6Mc1EtGg5HjL0SrTiUoXaBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890aBcDeFgHiJkLmNoPqRsTuVwXyZ987654321");
+    bridge.redeem(&user, &token.address, &100, &receiver);
+}
+
+#[test]
 fn test_admin_functions() {
     let (env, bridge, _admin, _token, _oracle, _user) = create_test_setup();
     let _rando = Address::generate(&env);
@@ -484,8 +560,30 @@ fn test_admin_functions() {
     bridge.set_oracle(&new_oracle_id);
 
     // Set Signer Cap
-    let signature = BytesN::from_array(&env, &[0u8; 65]);
-    bridge.set_signer_cap(&signature, &500);
+    let (_secret_key, public_key) = generate_keypair();
+    let signer_key = get_signer_cap_key(&env, &public_key);
+    bridge.set_signer_cap(&signer_key, &500);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #409)")] // InvalidSignerKey
+fn test_set_signer_cap_rejects_invalid_key_format() {
+    let (env, bridge, _admin, _token, _oracle, _user) = create_test_setup();
+
+    let mut invalid = [0u8; 65];
+    invalid[0] = 0x02; // compressed prefix
+    let signer = BytesN::from_array(&env, &invalid);
+
+    bridge.set_signer_cap(&signer, &500);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #409)")] // InvalidSignerKey
+fn test_set_signer_cap_rejects_all_zero_key() {
+    let (env, bridge, _admin, _token, _oracle, _user) = create_test_setup();
+
+    let signer = BytesN::from_array(&env, &[0u8; 65]);
+    bridge.set_signer_cap(&signer, &500);
 }
 
 #[test]
@@ -645,7 +743,7 @@ fn test_i128_to_ascii_bytes_panics_on_min_value_bridge() {
     let env = Env::default();
     let user = Address::generate(&env);
     let token = Address::generate(&env);
-    let btc_tx_hash = Bytes::from_slice(&env, &[0u8; 32]);
+    let btc_tx_hash = Bytes::from_slice(&env, &[0u8; 64]); // 64-byte hex string
     let btc_amount_str = Bytes::from_slice(&env, b"min");
     let op_return_hash_hex = Bytes::from_slice(&env, b"00");
     let nav_str = Bytes::from_slice(&env, b"1.0");
@@ -763,7 +861,7 @@ fn test_mint_invalid_signature_recovery_id() {
     let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
     
     // Prepare valid data structure but invalid signature
-    let btc_tx_hash = Bytes::from_slice(&env, &[0x55; 32]);
+    let btc_tx_hash = Bytes::from_slice(&env, &[0x55; 64]); // 64-byte hex string
     let btc_amount = 100_000_000i128;
     let btc_amount_str = Bytes::from_slice(&env, b"1.0");
     let nav = 100_000_000i128;

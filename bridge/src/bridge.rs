@@ -1,5 +1,6 @@
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, Address, Bytes, BytesN, Env, Symbol, crypto::Hash,
+    contract, contractimpl, contracttype, crypto::Hash, panic_with_error, Address, Bytes, BytesN,
+    Env, Symbol,
 };
 use stellar_default_impl_macro::default_impl;
 use stellar_ownable::{self as ownable, Ownable};
@@ -29,15 +30,24 @@ const NAV_DIFF_BPS_DENOMINATOR: i128 = 10_000;
 /// Maximum input length (in bytes) for hex encoding helper.
 const MAX_OP_RETURN_HASH_LENGTH: usize = 32;
 
+/// Bitcoin txid hex string length (UTF-8 bytes).
+const BTC_TX_HASH_HEX_LENGTH: usize = 64;
+
 /// StrKey address length for Soroban addresses.
 const ADDRESS_STRKEY_LENGTH: usize = 56;
+
+/// Max input lengths (bytes) to prevent abuse.
+const MAX_MINT_NUM_STR_LENGTH: usize = 64;
+
+// BIP-173/350 bech32/bech32m max length is 90 characters.
+const MAX_BTC_RECEIVER_LENGTH: usize = 90;
 
 /// Ethereum personal_sign V offset.
 const ETHEREUM_V_OFFSET: u8 = 27;
 
 const LEDGERS_PER_DAY: u32 = (24 * 3600) / 5;
-const BTC_TX_HASH_TTL_THRESHOLD: u32 = 121 * LEDGERS_PER_DAY;
-const BTC_TX_HASH_TTL_EXTEND_TO: u32 = u32::MAX;
+const BTC_TX_HASH_TTL_THRESHOLD: u32 = 30 * LEDGERS_PER_DAY;
+const BTC_TX_HASH_TTL_EXTEND_TO: u32 = 180 * LEDGERS_PER_DAY;
 
 // ==================== Data Structures ====================
 
@@ -57,31 +67,6 @@ pub struct SolvBTCBridge;
 
 #[contractimpl]
 impl SolvBTCBridge {
-    /// Validate that provided NAV is close enough to oracle NAV (<= 1% diff).
-    fn validate_nav_with_oracle(env: &Env, provided_nav: i128) {
-        // Since the estimated APR is within 5%, and the time interval between users withdraw
-        // requests and claims will not exceed 2 months, we limit the NAV difference between
-        // these two operations to no more than 1%.
-        let oracle_address: Address = env
-            .storage()
-            .instance()
-            .get(&BridgeDataKey::Oracle)
-            .unwrap();
-        let oracle_client = OracleClient::new(env, &oracle_address);
-        let realtime_nav = oracle_client.get_nav();
-
-        let diff = (provided_nav - realtime_nav).abs();
-        let limit = realtime_nav
-            .checked_mul(NAV_DIFF_THRESHOLD_BPS)
-            .unwrap_or(0)
-            .checked_div(NAV_DIFF_BPS_DENOMINATOR)
-            .unwrap_or(0);
-
-        if diff > limit {
-            panic_with_error!(env, BridgeError::NavOutOfRange);
-        }
-    }
-
     pub fn __constructor(
         env: &Env,
         admin: Address,
@@ -122,24 +107,37 @@ impl BridgeOperations for SolvBTCBridge {
             panic_with_error!(&env, BridgeError::InvalidNav);
         }
 
+        if btc_tx_hash.len() != BTC_TX_HASH_HEX_LENGTH as u32 {
+            panic_with_error!(&env, BridgeError::InvalidData);
+        }
+        if btc_amount_str.len() == 0 || btc_amount_str.len() > MAX_MINT_NUM_STR_LENGTH as u32 {
+            panic_with_error!(&env, BridgeError::InvalidData);
+        }
+        if nav_str.len() == 0 || nav_str.len() > MAX_MINT_NUM_STR_LENGTH as u32 {
+            panic_with_error!(&env, BridgeError::InvalidData);
+        }
+
         // 2. Check Token
         let stored_token: Address = env.storage().instance().get(&BridgeDataKey::Token).unwrap();
         if token_address != stored_token {
             panic_with_error!(&env, BridgeError::TokenNotSupported);
         }
-
-        // 3. Replay Protection
-        if env.storage().persistent().has(&BridgeDataKey::BTCTxHash(btc_tx_hash.clone())) {
+      
+        // 3. Check if the BTC tx hash has been used
+        if env
+            .storage()
+            .persistent()
+            .has(&BridgeDataKey::BTCTxHash(btc_tx_hash.clone()))
+        {
             panic_with_error!(&env, BridgeError::TxAlreadyUsed);
         }
 
         // 4. OP_RETURN Hash: Computed on-chain to prevent spoofing
-        // keccak256("Stellar" + token_address + user_address)
+        // keccak256("stellar" + token_address + user_address)
         let op_return_hash = Self::compute_op_return_hash(&env, &token_address, &from);
         let op_hash_hex = Self::op_return_hash_to_hex_string_bytes(&env, &op_return_hash);
 
         // 5. Verify Signature (EVM Personal Sign)
-        // Construct message to match signature-demo logic
         let message = Self::build_mint_message(
             &env,
             &btc_tx_hash,
@@ -155,7 +153,7 @@ impl BridgeOperations for SolvBTCBridge {
         // Use helper for personal_sign verification which includes hashing and recover
         let recovered_key = Self::verify_secp256k1_personal_sign_recover(&env, signature, message);
 
-        // 6. NAV Validation（必须有 Oracle）
+        // 6. NAV Validation
         Self::validate_nav_with_oracle(&env, nav);
 
         // 7. Check Signer Cap (per-mint limit)
@@ -177,6 +175,10 @@ impl BridgeOperations for SolvBTCBridge {
             Self::get_nav_decimals_internal(&env)
         );
 
+        if mint_amount <= 0 {
+            panic_with_error!(&env, BridgeError::InvalidAmount);
+        }
+
         let cap_key = BridgeDataKey::SignerCap(recovered_key);
         let cap: i128 = env.storage().instance().get(&cap_key).unwrap_or(0); // Default 0 means not authorized
 
@@ -195,7 +197,7 @@ impl BridgeOperations for SolvBTCBridge {
 
         // Event
         env.events().publish(
-            (Symbol::new(&env, "mint"), from.clone(), token_address.clone()),
+            (Symbol::new(&env, "mint"), btc_tx_hash.clone(), from.clone()),
             MintEvent {
                 btc_tx_hash,
                 token_address,
@@ -228,6 +230,10 @@ impl BridgeOperations for SolvBTCBridge {
             panic_with_error!(&env, BridgeError::TokenNotSupported);
         }
 
+        if receiver.len() == 0 || receiver.len() > MAX_BTC_RECEIVER_LENGTH as u32 {
+            panic_with_error!(env, BridgeError::InvalidAddress);
+        }
+
         // Get NAV from Oracle
         let oracle_address: Address = env.storage().instance().get(&BridgeDataKey::Oracle).unwrap();
         let oracle_client = OracleClient::new(&env, &oracle_address);
@@ -250,9 +256,13 @@ impl BridgeOperations for SolvBTCBridge {
             nav_decimals
         );
 
+        if btc_amount <= 0 {
+            panic_with_error!(&env, BridgeError::InvalidAmount);
+        }
+
         // Event
         env.events().publish(
-            (Symbol::new(&env, "redeem"), from.clone(), token_address.clone()),
+            (Symbol::new(&env, "redeem"), receiver.clone(), from.clone()),
             RedeemEvent {
                 token: token_address,
                 user: from,
@@ -269,6 +279,12 @@ impl BridgeOperations for SolvBTCBridge {
 impl BridgeAdmin for SolvBTCBridge {
     #[only_owner]
     fn set_signer_cap(env: Env, signer: BytesN<65>, cap: i128) {
+        let signer_bytes = signer.to_array();
+        // Uncompressed secp256k1 public key format: 0x04 || X(32) || Y(32)
+        if signer_bytes[0] != 0x04 {
+            panic_with_error!(&env, BridgeError::InvalidSignerKey);
+        }
+
         if cap < 0 {
             panic_with_error!(&env, BridgeError::InvalidAmount);
         }
@@ -295,11 +311,12 @@ impl BridgeAdmin for SolvBTCBridge {
         let btc_decimals = BTC_DECIMALS;
         Self::validate_decimals_config(&env, shares_decimals, btc_decimals, nav_decimals);
 
+        let admin = ownable::get_owner(&env).unwrap();
         env.storage().instance().set(&BridgeDataKey::Oracle, &oracle);
         env.events().publish(
-            (Symbol::new(&env, "set_oracle"), oracle.clone()),
+            (Symbol::new(&env, "set_oracle"), admin.clone()),
             SetOracleEvent {
-                admin: ownable::get_owner(&env).unwrap(),
+                admin: admin.clone(),
                 oracle: oracle.clone(),
             },
         );
@@ -385,6 +402,7 @@ impl SolvBTCBridge {
         env.crypto().keccak256(&eth_msg)
     }
 
+    /// Compute op_return hash
     pub(crate) fn compute_op_return_hash(
         env: &Env,
         token: &Address,
@@ -397,6 +415,7 @@ impl SolvBTCBridge {
         env.crypto().keccak256(&op_input).into()
     }
 
+    /// Build mint message
     pub(crate) fn build_mint_message(
         env: &Env,
         btc_tx_hash: &Bytes,
@@ -437,6 +456,7 @@ impl SolvBTCBridge {
         message
     }
 
+    /// Validate decimals configuration
     pub(crate) fn validate_decimals_config(env: &Env, decimals_a: u32, decimals_b: u32, decimals_c: u32) {
         if decimals_a > MAX_DECIMALS_PER_TOKEN
             || decimals_b > MAX_DECIMALS_PER_TOKEN
@@ -449,11 +469,45 @@ impl SolvBTCBridge {
         }
     }
 
+     /// Validate that provided NAV is close enough to oracle NAV (<= 1% diff).
+     fn validate_nav_with_oracle(env: &Env, provided_nav: i128) {
+        // Since the estimated APR is within 5%, and the time interval between users withdraw
+        // requests and claims will not exceed 2 months, we limit the NAV difference between
+        // these two operations to no more than 1%.
+        let oracle_address: Address = env
+            .storage()
+            .instance()
+            .get(&BridgeDataKey::Oracle)
+            .unwrap();
+        let oracle_client = OracleClient::new(env, &oracle_address);
+        let realtime_nav = oracle_client.get_nav();
+
+        if realtime_nav <= 0 {
+            panic_with_error!(env, BridgeError::InvalidNav);
+        }
+
+        let diff = provided_nav
+            .checked_sub(realtime_nav)
+            .and_then(|d| d.checked_abs())
+            .unwrap_or_else(|| panic_with_error!(env, BridgeError::InvalidNav));
+
+        let limit = realtime_nav
+            .checked_mul(NAV_DIFF_THRESHOLD_BPS)
+            .and_then(|x| x.checked_div(NAV_DIFF_BPS_DENOMINATOR))
+            .unwrap_or_else(|| panic_with_error!(env, BridgeError::InvalidNav));
+
+        if diff > limit {
+            panic_with_error!(env, BridgeError::NavOutOfRange);
+        }
+    }
+
+    /// Get NAV decimals from Oracle
     fn get_nav_decimals_internal(env: &Env) -> u32 {
         let oracle_address: Address = env.storage().instance().get(&BridgeDataKey::Oracle).unwrap();
         OracleClient::new(env, &oracle_address).get_nav_decimals()
     }
-
+    
+    /// Calculate mint amount
     pub(crate) fn calculate_mint_amount(
         env: &Env,
         deposit_amount: i128,
@@ -491,6 +545,7 @@ impl SolvBTCBridge {
         minted
     }
 
+    /// Calculate withdraw amount
     pub(crate) fn calculate_withdraw_amount(
         env: &Env,
         shares: i128,
@@ -528,6 +583,7 @@ impl SolvBTCBridge {
         amount
     }
 
+    /// Convert op_return hash to hex string bytes
     pub(crate) fn op_return_hash_to_hex_string_bytes(env: &Env, data: &Bytes) -> Bytes {
         let len = data.len() as usize;
         if len > MAX_OP_RETURN_HASH_LENGTH {
@@ -548,6 +604,7 @@ impl SolvBTCBridge {
         Bytes::from_slice(env, &hex_buf[..len * 2])
     }
 
+    /// Convert u32 to ascii bytes
     fn u32_to_ascii_bytes(env: &Env, mut n: u32) -> Bytes {
         if n == 0 {
             return Bytes::from_slice(env, b"0");
@@ -563,6 +620,7 @@ impl SolvBTCBridge {
         Bytes::from_slice(env, &buf[i..])
     }
 
+    /// Convert address to bytes
     pub(crate) fn address_to_bytes(env: &Env, addr: &Address) -> Bytes {
         // Soroban address are 56-char StrKey strings.
         let s = addr.to_string();
@@ -575,6 +633,7 @@ impl SolvBTCBridge {
         Bytes::from_slice(env, &tmp[..len])
     }
 
+    /// Convert i128 to ascii bytes
     fn i128_to_ascii_bytes(env: &Env, mut n: i128) -> Bytes {
         if n == 0 {
             return Bytes::from_slice(env, b"0");
