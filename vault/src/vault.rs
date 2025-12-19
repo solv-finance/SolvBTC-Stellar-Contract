@@ -1,6 +1,6 @@
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, xdr::ToXdr, Address,
-    Bytes, BytesN, Env, Map, String, Symbol, Vec,
+    Bytes, BytesN, Env, Map, String, Symbol, Vec, crypto::Hash,
 };
 use stellar_default_impl_macro::default_impl;
 use stellar_ownable::{self as ownable, Ownable};
@@ -21,11 +21,8 @@ const MAX_CURRENCIES: u32 = 10;
 /// Fee precision (10000 = 100%)
 const FEE_PRECISION: i128 = 10000;
 
-/// Domain name as bytes
-const DOMAIN_NAME_BYTES: &[u8] = b"Solv Vault Withdraw";
-
-/// Domain version as bytes
-const DOMAIN_VERSION_BYTES: &[u8] = b"1";
+/// StrKey address length for Soroban addresses.
+const ADDRESS_STRKEY_LENGTH: usize = 56;
 
 // ==================== Data Structures ====================
 
@@ -338,14 +335,15 @@ impl VaultOperations for SolvBTCVault {
             panic_with_error!(env, VaultError::InvalidRequestStatus);
         }
 
-        // Create common withdraw message and signature message for both signature types
-        let withdraw_message =
-            Self::create_withdraw_message(&env, &from, shares, &withdraw_token, nav, &request_hash);
-        let message_hash = env.crypto().sha256(&withdraw_message);
-        let signature_message =
-            Self::create_signature_message(&env, &Bytes::from(message_hash.clone()));
-        // Hash the signature message to 32-byte digest
-        let digest = env.crypto().sha256(&signature_message);
+        // Create string message for signing
+        let withdraw_message = Self::create_withdraw_string_message(
+            &env,
+            &from,
+            shares,
+            &withdraw_token,
+            nav,
+            &request_hash,
+        );
 
         // Convert u32 to SignatureType enum
         let sig_type = SignatureType::from_u32(signature_type)
@@ -362,13 +360,9 @@ impl VaultOperations for SolvBTCVault {
                     .get(&DataKey::WithdrawVerifier(SignatureType::Ed25519.to_u32()))
                     .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawVerifierNotSet));
 
-                // Verify signature with domain standard (ed25519)
-                Self::verify_ed25519_signature(
-                    &env,
-                    &verifier_public_key,
-                    &digest.into(),
-                    &signature,
-                );
+                // Verify signature with raw string message
+                env.crypto()
+                    .ed25519_verify(&verifier_public_key, &withdraw_message, &signature);
             }
 
             // Verify Secp256k1 signature
@@ -381,6 +375,9 @@ impl VaultOperations for SolvBTCVault {
                         SignatureType::Secp256k1.to_u32(),
                     ))
                     .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawVerifierNotSet));
+
+                // Calculate EIP191 digest
+                let digest = Self::personal_sign_hash(&env, &withdraw_message);
 
                 // Recover public key and compare with stored 65-byte uncompressed key
                 let recovered = env
@@ -761,25 +758,6 @@ impl VaultQuery for SolvBTCVault {
         Self::get_deposit_fee_ratio_for_currency_internal(&env, &currency)
     }
 
-    fn get_domain_name(env: Env) -> String {
-        // Convert bytes constant to String
-        String::from_bytes(&env, DOMAIN_NAME_BYTES)
-    }
-
-    fn get_domain_version(env: Env) -> String {
-        // Convert bytes constant to String
-        String::from_bytes(&env, DOMAIN_VERSION_BYTES)
-    }
-
-    fn get_chain_id(env: Env) -> Bytes {
-        let network_id = env.ledger().network_id(); // Return BytesN<32>
-                                                    // Directly return network_id, convert to Bytes type
-        network_id.into()
-    }
-
-    fn get_domain_separator(env: Env) -> Bytes {
-        Self::calculate_domain_separator(&env)
-    }
 
     fn get_withdraw_fee_receiver(env: Env) -> Address {
         Self::get_withdraw_fee_receiver_internal(&env)
@@ -789,127 +767,129 @@ impl VaultQuery for SolvBTCVault {
 // ==================== Internal helper functions ====================
 
 impl SolvBTCVault {
-    /// Create withdrawal message for signature verification
-    fn create_withdraw_message(
+    /// Create withdrawal message string for signature verification (EIP191 style)
+    pub(crate) fn create_withdraw_string_message(
         env: &Env,
-        _user: &Address,
-        target_amount: i128,
-        target_token: &Address,
+        user: &Address,
+        shares: i128,
+        withdraw_token: &Address,
         nav: i128,
         request_hash: &Bytes,
     ) -> Bytes {
-        let mut encoded = Bytes::new(env);
+        let mut message = Bytes::new(env);
+        message.append(&Bytes::from_slice(env, b"stellar\n"));
 
-        // 1. Add type hash as the first item
-        let type_hash = env.crypto().sha256(&Bytes::from_slice(env,
-            b"Withdraw(uint256 chainId,string action,address user,address withdrawToken,uint256 shares,uint256 nav,bytes32 requestHash)"));
-        encoded.append(&type_hash.into());
+        message.append(&Bytes::from_slice(env, b"withdraw\n"));
 
-        // 2. Add network ID (chain ID) - already 32 bytes
-        let network_id = env.ledger().network_id();
-        encoded.append(&network_id.into());
-
-        // 3. Hash action (dynamic string) before concatenation
-        let action_bytes = Bytes::from_slice(env, b"withdraw");
-        let action_hash = env.crypto().sha256(&action_bytes);
-        encoded.append(&action_hash.into());
-
-        // 4. Hash user address (consistent with calculate_domain_separator)
-        let user_xdr = _user.to_xdr(env);
-        let user_hash = env.crypto().sha256(&user_xdr);
-        encoded.append(&user_hash.into());
-
-        // 5. Hash target token address (consistent encoding)
-        let token_xdr = target_token.to_xdr(env);
-        let token_hash = env.crypto().sha256(&token_xdr);
-        encoded.append(&token_hash.into());
-
-        // 6. Add target amount (shares) as fixed 32-byte representation
-        let mut amount_bytes = [0u8; 32];
-        let amount_be = target_amount.to_be_bytes();
-        amount_bytes[32 - amount_be.len()..].copy_from_slice(&amount_be);
-        encoded.append(&Bytes::from_array(env, &amount_bytes));
-
-        // 7. Add NAV value as fixed 32-byte representation
-        let mut nav_bytes = [0u8; 32];
-        let nav_be = nav.to_be_bytes();
-        nav_bytes[32 - nav_be.len()..].copy_from_slice(&nav_be);
-        encoded.append(&Bytes::from_array(env, &nav_bytes));
-
-        // 8. Hash request_hash (dynamic bytes) before concatenation
-        let request_hash_hashed = env.crypto().sha256(request_hash);
-        encoded.append(&request_hash_hashed.into());
-
-        encoded
+        message.append(&Bytes::from_slice(env, b"vault: "));
+        let vault_address = env.current_contract_address();
+        message.append(&Self::address_to_bytes(env, &vault_address));
+        message.append(&Bytes::from_slice(env, b"\n"));
+        
+        message.append(&Bytes::from_slice(env, b"user: "));
+        message.append(&Self::address_to_bytes(env, user));
+        message.append(&Bytes::from_slice(env, b"\n"));
+        
+        message.append(&Bytes::from_slice(env, b"withdraw_token: "));
+        message.append(&Self::address_to_bytes(env, withdraw_token));
+        message.append(&Bytes::from_slice(env, b"\n"));
+        
+        message.append(&Bytes::from_slice(env, b"shares: "));
+        message.append(&Self::i128_to_ascii_bytes(env, shares));
+        message.append(&Bytes::from_slice(env, b"\n"));
+        
+        message.append(&Bytes::from_slice(env, b"nav: "));
+        message.append(&Self::i128_to_ascii_bytes(env, nav));
+        message.append(&Bytes::from_slice(env, b"\n"));
+        
+        message.append(&Bytes::from_slice(env, b"request_hash: "));
+        message.append(&Self::bytes_to_hex_string_bytes(env, request_hash));
+        
+        message
     }
 
-    // Create signature verification message with domain standard: \x19\x01 + DomainSeparator + MessageHash
-    fn create_signature_message(env: &Env, message_hash: &Bytes) -> Bytes {
-        let mut encoded = Bytes::new(env);
+    fn bytes_to_hex_string_bytes(env: &Env, data: &Bytes) -> Bytes {
+        let len = data.len() as usize;
+        let mut buf = [0u8; 32];
+        if len > buf.len() {
+            panic_with_error!(env, VaultError::InvalidVerifierKey);
+        }
+        data.copy_into_slice(&mut buf[..len]);
 
-        // 1. Add fixed prefix \x19\x01
-        encoded.append(&Bytes::from_slice(env, &[0x19, 0x01]));
+        let mut hex_buf = [0u8; 64];
+        let hex_chars = b"0123456789abcdef";
 
-        // 2. Calculate and add DomainSeparator
-        let domain_separator = Self::calculate_domain_separator(env);
-        encoded.append(&domain_separator);
+        for i in 0..len {
+            let b = buf[i];
+            hex_buf[i * 2] = hex_chars[(b >> 4) as usize];
+            hex_buf[i * 2 + 1] = hex_chars[(b & 0x0F) as usize];
+        }
 
-        // 3. Add MessageHash
-        encoded.append(message_hash);
-
-        encoded
+        Bytes::from_slice(env, &hex_buf[..len * 2])
     }
 
-    // Calculate domain separator
-    fn calculate_domain_separator(env: &Env) -> Bytes {
-        // Implement domain separator calculation
-        let mut domain_encoded = Bytes::new(env);
-
-        // 1. Domain TypeHash
-        // sha256 hash of the withdraw message structure
-        let type_hash = env.crypto().sha256(&Bytes::from_slice(env,
-            b"Withdraw(uint256 chainId,string action,address user,address withdrawToken,uint256 shares,uint256 nav,bytes32 requestHash)"));
-        domain_encoded.append(&type_hash.into());
-
-        // 2. name field's hash - use constant directly
-        let name_bytes = Bytes::from_slice(env, DOMAIN_NAME_BYTES);
-        let name_hash = env.crypto().sha256(&name_bytes);
-        domain_encoded.append(&name_hash.into());
-
-        // 3. version field's hash - use constant directly
-        let version_bytes = Bytes::from_slice(env, DOMAIN_VERSION_BYTES);
-        let version_hash = env.crypto().sha256(&version_bytes);
-        domain_encoded.append(&version_hash.into());
-
-        // 4. chainId field (32 bytes)
-        let chain_id = Self::get_chain_id_internal(env);
-        domain_encoded.append(&chain_id);
-
-        // 5. verifyingContract field's hash
-        let verifying_contract = env.current_contract_address();
-        // Directly use byte representation of contract address
-        let contract_xdr = verifying_contract.to_xdr(env);
-        let contract_hash = env.crypto().sha256(&contract_xdr);
-        domain_encoded.append(&contract_hash.into());
-
-        // 6. salt field (32 bytes of zero value)
-        let salt = Bytes::from_array(env, &[0u8; 32]);
-        domain_encoded.append(&salt);
-
-        // Return domain separator's hash (using sha256 as supported by Soroban)
-        env.crypto().sha256(&domain_encoded).into()
+    fn u32_to_ascii_bytes(env: &Env, mut n: u32) -> Bytes {
+        if n == 0 {
+            return Bytes::from_slice(env, b"0");
+        }
+        let mut buf = [0u8; 10];
+        let mut i = 10;
+      
+        while n > 0 {
+            i -= 1;
+            buf[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+        }
+        Bytes::from_slice(env, &buf[i..])
     }
 
-    /// Ed25519 signature verification function, using Soroban SDK built-in functionality
-    fn verify_ed25519_signature(
-        env: &Env,
-        public_key_bytes: &BytesN<32>,
-        message: &Bytes,
-        signature_bytes: &BytesN<64>,
-    ) {
-        // Call Soroban built-in ed25519 verification, if signature is invalid will panic
-        env.crypto()
-            .ed25519_verify(&public_key_bytes, message, &signature_bytes);
+    fn personal_sign_hash(env: &Env, message: &Bytes) -> Hash<32> {
+        let mut eth_msg = Bytes::new(env);
+        eth_msg.append(&Bytes::from_slice(
+            env,
+            b"\x19Ethereum Signed Message:\n",
+        ));
+        eth_msg.append(&Self::u32_to_ascii_bytes(env, message.len()));
+        eth_msg.append(message);
+
+        env.crypto().keccak256(&eth_msg)
+    }
+
+    fn address_to_bytes(env: &Env, s: &Address) -> Bytes {
+        let str = s.to_string();
+        let len: usize = str.len() as usize;
+        let mut tmp = [0u8; ADDRESS_STRKEY_LENGTH];
+        if len > tmp.len() {
+            panic_with_error!(env, VaultError::InvalidVerifierKey);
+        }
+        str.copy_into_slice(&mut tmp[..len]);
+        Bytes::from_slice(env, &tmp[..len])
+    }
+
+    fn i128_to_ascii_bytes(env: &Env, mut n: i128) -> Bytes {
+        if n == 0 {
+            return Bytes::from_slice(env, b"0");
+        }
+        let mut buf = [0u8; 40];
+        let mut i = 40;
+        let is_neg = n < 0;
+       
+        if is_neg {
+            n = -n;
+        }
+
+        while n > 0 {
+            i -= 1;
+            buf[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+        }
+
+        if is_neg {
+            i -= 1;
+            buf[i] = b'-';
+        }
+
+        Bytes::from_slice(env, &buf[i..])
     }
 
     /// Get admin address (internal helper)
@@ -1112,13 +1092,6 @@ impl SolvBTCVault {
             .instance()
             .get(&DataKey::TokenContract)
             .unwrap()
-    }
-
-    /// Get chain ID (internal function)
-    fn get_chain_id_internal(env: &Env) -> Bytes {
-        let network_id = env.ledger().network_id(); // Return BytesN<32>
-                                                    // Directly return network_id, convert to Bytes type
-        network_id.into()
     }
 
     /// Generate second hash key with all parameters (_msgSender, withdrawToken, requestHash, shares, nav)
