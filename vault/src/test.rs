@@ -1141,6 +1141,21 @@ fn test_withdraw_request_invalid_amount_negative() {
     client.withdraw_request(&user, &-100, &request_hash);
 }
 
+/// Test withdraw request with oversized request_hash
+#[test]
+#[should_panic(expected = "Error(Contract, #318)")]
+fn test_withdraw_request_invalid_request_hash_length() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _, _) = create_vault_contract(&env);
+    let user = Address::generate(&env);
+    let oversized = [0u8; 32 + 1];
+    let request_hash = Bytes::from_slice(&env, &oversized);
+
+    client.withdraw_request(&user, &1, &request_hash);
+}
+
 /// Test treasurer deposit with invalid amount
 #[test]
 #[should_panic(expected = "Error(Contract, #305)")]
@@ -3486,4 +3501,47 @@ fn test_set_withdraw_verifier_valid_keys() {
     let secp256k1_key = Bytes::from_array(&env, &secp256k1_key_bytes);
     client.set_withdraw_verifier_by_admin(&1u32, &secp256k1_key);
     assert_eq!(client.get_withdraw_verifier(&1u32), Some(secp256k1_key));
+}
+// Add tests for request_hash length validation in withdraw
+#[test]
+#[should_panic(expected = "Error(Contract, #318)")] // InvalidRequestHashLength
+fn test_withdraw_invalid_hash_length() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _token, _oracle, _treasurer) = create_vault_with_mocks(&env);
+    let user = Address::generate(&env);
+    let shares = 50_000_000i128;
+    let nav = 100_000_000i128;
+
+    // Create a request hash > 32 bytes (33 bytes)
+    let invalid_hash = Bytes::from_array(&env, &[1u8; 33]);
+    let sig_bytes = BytesN::<64>::from_array(&env, &[0u8; 64]);
+
+    // This should fail early due to length check
+    client.withdraw(
+        &user,
+        &shares,
+        &nav,
+        &invalid_hash,
+        &sig_bytes,
+        &0u32,
+        &0u32,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #318)")] // InvalidRequestHashLength
+fn test_withdraw_request_invalid_hash_length() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _token, _oracle, _treasurer) = create_vault_with_mocks(&env);
+    let user = Address::generate(&env);
+    
+    // Create a request hash > 32 bytes
+    let invalid_hash = Bytes::from_array(&env, &[1u8; 33]);
+    let shares = 1000i128;
+
+    client.withdraw_request(&user, &shares, &invalid_hash);
 }
