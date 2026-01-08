@@ -1063,24 +1063,24 @@ impl SolvBTCVault {
         let common_factor = shares_decimals.min(currency_decimals);
         let nav_scale = 10_i128.pow(nav_decimals);
 
-        // Step 1: scale amount by 10^(shares_decimals - common_factor) / 10^(currency_decimals - common_factor)
-        let scaled_amount = if shares_decimals >= currency_decimals {
-            let scale = 10_i128.pow(shares_decimals - common_factor);
-            deposit_amount
-                .checked_mul(scale)
-                .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount))
+        // Step 1: apply scale factor in numerator/denominator to avoid early truncation.
+        let (scale_num, scale_den) = if shares_decimals >= currency_decimals {
+            (10_i128.pow(shares_decimals - common_factor), 1_i128)
         } else {
-            let scale = 10_i128.pow(currency_decimals - common_factor);
-            deposit_amount
-                .checked_div(scale)
-                .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount))
+            (1_i128, 10_i128.pow(currency_decimals - common_factor))
         };
 
-        // Step 2: multiply by nav_scale and divide by nav (checked)
+        // Step 2: multiply before dividing to preserve precision.
+        let numerator = deposit_amount
+            .checked_mul(scale_num)
+            .and_then(|x| x.checked_mul(nav_scale))
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount));
+        let denominator = nav
+            .checked_mul(scale_den)
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount));
 
-        let minted = scaled_amount
-            .checked_mul(nav_scale)
-            .and_then(|x| x.checked_div(nav))
+        let minted = numerator
+            .checked_div(denominator)
             .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidAmount));
 
         minted
