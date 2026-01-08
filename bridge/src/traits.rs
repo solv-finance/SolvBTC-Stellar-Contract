@@ -27,9 +27,8 @@ pub trait BridgeOperations {
 
 /// Bridge Admin Trait
 pub trait BridgeAdmin {
-    /// Set the signer's per-mint cap (maximum mint amount allowed per `mint` call).
-    /// This cap is a single-transaction upper bound and is not decremented by the contract.
-    fn set_signer_cap(env: Env, signer: BytesN<65>, cap: i128);
+    /// Set the signer's mint policy (per-mint cap + window cap, in BTC sats).
+    fn set_signer_policy(env: Env, signer: BytesN<65>, cap: i128, window_cap: i128, duration: u64);
 
     /// Set the Oracle address (validated against token/BTC decimals)
     fn set_oracle(env: Env, oracle: Address);
@@ -37,8 +36,8 @@ pub trait BridgeAdmin {
 
 /// Read-only query functions
 pub trait BridgeQuery {
-    /// Get the configured per-mint cap for a given recovered public key
-    fn get_signer_cap(env: Env, signer: BytesN<65>) -> i128;
+    /// Get the configured signer mint policy (cap, window_cap, duration).
+    fn get_signer_policy(env: Env, signer: BytesN<65>) -> (i128, i128, u64);
 
     /// Get the configured token contract address
     fn get_token(env: Env) -> Address;
@@ -76,11 +75,12 @@ pub struct RedeemEvent {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SetSignerCapEvent {
+pub struct SetSignerPolicyEvent {
     pub admin: Address,
     pub signer: BytesN<65>,
-    /// Per-mint cap value
     pub cap: i128,
+    pub window_cap: i128,
+    pub duration: u64,
 }
 
 #[contracttype]
@@ -108,4 +108,6 @@ pub enum BridgeError {
     NavOutOfRange = 410,
     InvalidDecimals = 411,
     InvalidAddress = 412,
+    SignerWindowCapExceeded = 413,
+    InvalidSignerPolicy = 414,
 }

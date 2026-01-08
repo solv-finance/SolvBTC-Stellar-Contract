@@ -57,8 +57,24 @@ pub enum BridgeDataKey {
     Admin,
     Token,
     Oracle,
-    SignerCap(BytesN<65>), // i128 per-mint cap for each Secp256k1 key
+    SignerPolicy(BytesN<65>), // SignerPolicy per signer for each secp256k1 key
+    SignerMintCounter(BytesN<65>), // SignerMintCounter per signer for each secp256k1 key
     BTCTxHash(Bytes),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SignerPolicy {
+    cap: i128,
+    window_cap: i128,
+    duration: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SignerMintCounter {
+    last_reset_time: u64,
+    used_amount: i128,
 }
 
 #[derive(Upgradeable)]
@@ -152,12 +168,28 @@ impl BridgeOperations for SolvBTCBridge {
         // 6. NAV Validation
         Self::validate_nav_with_oracle(&env, nav);
 
-        // 7. Check Signer Cap (per-mint limit)
-        // Key: SignerCap(recovered_key) -> Value: i128 max mint amount per call.
-        // Cap is a single-transaction upper bound and is not decremented.
-        // If key doesn't exist, cap is 0 (unauthorized).
-        
-        // Calculate Mint Amount first
+        // 7. Check signer policy (cap + window cap)
+        // Get signer policy
+        let policy: SignerPolicy = env
+            .storage()
+            .instance()
+            .get(&BridgeDataKey::SignerPolicy(recovered_key.clone()))
+            .unwrap_or_else(|| panic_with_error!(&env, BridgeError::Unauthorized));
+
+        // Check if signer policy is valid
+        if policy.window_cap <= 0 || policy.duration == 0 {
+            panic_with_error!(&env, BridgeError::InvalidSignerPolicy);
+        }
+
+        // Check if BTC amount exceeds signer cap
+        if btc_amount > policy.cap {
+            panic_with_error!(&env, BridgeError::SignerCapExceeded);
+        }
+
+        // Enforce signer window cap
+        Self::enforce_signer_window_cap(&env, &recovered_key, &policy, btc_amount);
+
+        // 8. Calculate Mint Amount
         let token_client = TokenClient::new(&env, &token_address);
         let shares_decimals = token_client.decimals();
         let btc_decimals = BTC_DECIMALS;
@@ -173,13 +205,6 @@ impl BridgeOperations for SolvBTCBridge {
 
         if mint_amount <= 0 {
             panic_with_error!(&env, BridgeError::InvalidAmount);
-        }
-
-        let cap_key = BridgeDataKey::SignerCap(recovered_key);
-        let cap: i128 = env.storage().instance().get(&cap_key).unwrap_or(0); // Default 0 means not authorized
-
-        if mint_amount > cap {
-            panic_with_error!(&env, BridgeError::SignerCapExceeded);
         }
 
         let tx_key = BridgeDataKey::BTCTxHash(btc_tx_hash.clone());
@@ -268,24 +293,33 @@ impl BridgeOperations for SolvBTCBridge {
 #[contractimpl]
 impl BridgeAdmin for SolvBTCBridge {
     #[only_owner]
-    fn set_signer_cap(env: Env, signer: BytesN<65>, cap: i128) {
+    fn set_signer_policy(env: Env, signer: BytesN<65>, cap: i128, window_cap: i128, duration: u64) {
         let signer_bytes = signer.to_array();
         // Uncompressed secp256k1 public key format: 0x04 || X(32) || Y(32)
         if signer_bytes[0] != 0x04 {
             panic_with_error!(&env, BridgeError::InvalidSignerKey);
         }
 
-        if cap < 0 {
-            panic_with_error!(&env, BridgeError::InvalidAmount);
+        if cap < 0 || window_cap <= 0 || duration == 0 || window_cap < cap {
+            panic_with_error!(&env, BridgeError::InvalidSignerPolicy);
         }
-        // Cap is a per-mint upper bound; it does not track cumulative usage.
-        env.storage().instance().set(&BridgeDataKey::SignerCap(signer.clone()), &cap);
+
+        let policy = SignerPolicy {
+            cap,
+            window_cap,
+            duration,
+        };
+        env.storage()
+            .instance()
+            .set(&BridgeDataKey::SignerPolicy(signer.clone()), &policy);
         env.events().publish(
-            (Symbol::new(&env, "set_signer_cap"), signer.clone()),
-            SetSignerCapEvent {
+            (Symbol::new(&env, "set_signer_policy"), signer.clone()),
+            SetSignerPolicyEvent {
                 admin: ownable::get_owner(&env).unwrap(),
-                signer: signer.clone(),
+                signer,
                 cap,
+                window_cap,
+                duration,
             },
         );
     }
@@ -315,9 +349,17 @@ impl BridgeAdmin for SolvBTCBridge {
 
 #[contractimpl]
 impl BridgeQuery for SolvBTCBridge {
-    fn get_signer_cap(env: Env, signer: BytesN<65>) -> i128 {
-        let key = BridgeDataKey::SignerCap(signer);
-        env.storage().instance().get(&key).unwrap_or(0)
+    fn get_signer_policy(env: Env, signer: BytesN<65>) -> (i128, i128, u64) {
+        let policy: SignerPolicy = env
+            .storage()
+            .instance()
+            .get(&BridgeDataKey::SignerPolicy(signer))
+            .unwrap_or(SignerPolicy {
+                cap: 0,
+                window_cap: 0,
+                duration: 0,
+            });
+        (policy.cap, policy.window_cap, policy.duration)
     }
 
     fn get_token(env: Env) -> Address {
@@ -460,7 +502,7 @@ impl SolvBTCBridge {
     }
 
      /// Validate that provided NAV is close enough to oracle NAV (<= 1% diff).
-     fn validate_nav_with_oracle(env: &Env, provided_nav: i128) {
+    fn validate_nav_with_oracle(env: &Env, provided_nav: i128) {
         // Since the estimated APR is within 5%, and the time interval between users withdraw
         // requests and claims will not exceed 2 months, we limit the NAV difference between
         // these two operations to no more than 1%.
@@ -489,6 +531,44 @@ impl SolvBTCBridge {
         if diff > limit {
             panic_with_error!(env, BridgeError::NavOutOfRange);
         }
+    }
+
+    fn enforce_signer_window_cap(
+        env: &Env,
+        signer: &BytesN<65>,
+        policy: &SignerPolicy,
+        amount: i128,
+    ) {
+        let now = env.ledger().timestamp();
+        let key = BridgeDataKey::SignerMintCounter(signer.clone());
+        let mut counter: SignerMintCounter = env.storage().instance().get(&key).unwrap_or(
+            SignerMintCounter {
+                last_reset_time: now,
+                used_amount: 0,
+            },
+        );
+
+        if now < counter.last_reset_time
+            || now
+                .checked_sub(counter.last_reset_time)
+                .map(|elapsed| elapsed >= policy.duration)
+                .unwrap_or(true)
+        {
+            counter.last_reset_time = now;
+            counter.used_amount = 0;
+        }
+
+        let new_used = counter
+            .used_amount
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(env, BridgeError::InvalidAmount));
+
+        if new_used > policy.window_cap {
+            panic_with_error!(env, BridgeError::SignerWindowCapExceeded);
+        }
+
+        counter.used_amount = new_used;
+        env.storage().instance().set(&key, &counter);
     }
 
     /// Get NAV decimals from Oracle

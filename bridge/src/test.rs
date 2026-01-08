@@ -3,7 +3,7 @@ extern crate std;
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Events, MockAuth, MockAuthInvoke},
+    testutils::{Address as _, Events, Ledger, MockAuth, MockAuthInvoke},
     contract, contractimpl, Address, Bytes, BytesN, Env, Symbol, IntoVal,
 };
 use secp256k1::{Message, SecretKey, PublicKey, Secp256k1};
@@ -74,6 +74,11 @@ fn get_signer_cap_key(env: &Env, public_key: &PublicKey) -> BytesN<65> {
     // Serialize to 65 bytes uncompressed
     let serialized = public_key.serialize_uncompressed();
     BytesN::from_array(env, &serialized)
+}
+
+fn set_signer_policy_for_tests(bridge: &SolvBTCBridgeClient, signer: &BytesN<65>, cap: i128) {
+    let window_cap = cap.saturating_mul(1_000_000);
+    bridge.set_signer_policy(signer, &cap, &window_cap, &3600u64);
 }
 
 fn sign_message(env: &Env, secret_key: &SecretKey, message: &Bytes) -> BytesN<65> {
@@ -179,7 +184,7 @@ fn test_mint_success() {
     let signer_key = get_signer_cap_key(&env, &public_key);
     // Large cap to comfortably cover mint amount for 1 BTC at NAV=1
     let cap = 1_000_000_000_000_000_000_000i128;
-    bridge.set_signer_cap(&signer_key, &cap);
+    set_signer_policy_for_tests(&bridge, &signer_key, cap);
 
     // 2. Prepare Data
     let btc_tx_hash = Bytes::from_slice(&env, &[0xab; 64]); // 64-byte hex string
@@ -230,12 +235,61 @@ fn test_mint_success() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #413)")] // SignerRateLimitExceeded
+fn test_mint_rate_limit_exceeded() {
+    let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
+
+    // 1. Setup signer and caps
+    let (secret_key, public_key) = generate_keypair();
+    let signer_key = get_signer_cap_key(&env, &public_key);
+    let btc_amount = 100_000_000i128; // 1 BTC
+    let cap = btc_amount;
+    let window_cap = btc_amount.checked_mul(2).expect("window cap overflow");
+    bridge.set_signer_policy(&signer_key, &cap, &window_cap, &3600u64);
+
+    // 2. Prepare Data
+    let btc_amount = 100_000_000i128;
+    let btc_amount_str = Bytes::from_slice(&env, b"1.0");
+    let nav = 100_000_000i128; // 1.0
+    let nav_str = Bytes::from_slice(&env, b"1.0");
+    let op_return_hash =
+        SolvBTCBridge::compute_op_return_hash(&env, &token.address, &user);
+    let op_hash_hex = SolvBTCBridge::op_return_hash_to_hex_string_bytes(&env, &op_return_hash);
+
+    for i in 0u8..3u8 {
+        let btc_tx_hash = Bytes::from_slice(&env, &[i; 64]);
+        let message = SolvBTCBridge::build_mint_message(
+            &env,
+            &btc_tx_hash,
+            &btc_amount_str,
+            btc_amount,
+            &op_hash_hex,
+            &nav_str,
+            nav,
+            &user,
+            &token.address,
+        );
+        let signature = sign_message(&env, &secret_key, &message);
+
+        bridge.mint(
+            &user,
+            &signature,
+            &btc_tx_hash,
+            &btc_amount,
+            &btc_amount_str,
+            &nav,
+            &nav_str,
+        );
+    }
+}
+
+#[test]
 fn test_mint_accepts_hex_string_btc_tx_hash() {
     let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
 
     let (secret_key, public_key) = generate_keypair();
     let signer_key = get_signer_cap_key(&env, &public_key);
-    bridge.set_signer_cap(&signer_key, &1_000_000_000_000_000_000_000i128);
+    set_signer_policy_for_tests(&bridge, &signer_key, 1_000_000_000_000_000_000_000i128);
 
     // 64-byte hex string (UTF-8 bytes)
     let btc_tx_hash = Bytes::from_slice(
@@ -340,7 +394,7 @@ fn test_mint_replay() {
     let (secret_key, public_key) = generate_keypair();
     let signer_key = get_signer_cap_key(&env, &public_key);
     // Large cap so replay test is not blocked by cap
-    bridge.set_signer_cap(&signer_key, &1_000_000_000_000_000_000_000i128);
+    set_signer_policy_for_tests(&bridge, &signer_key, 1_000_000_000_000_000_000_000i128);
 
     let btc_tx_hash = Bytes::from_slice(&env, &[0x11; 64]); // 64-byte hex string
     let btc_amount = 100_000_000i128;
@@ -380,7 +434,7 @@ fn test_mint_cap_exceeded() {
     let (secret_key, public_key) = generate_keypair();
     let signer_key = get_signer_cap_key(&env, &public_key);
     // Cap = 1 satoshi
-    bridge.set_signer_cap(&signer_key, &1);
+    set_signer_policy_for_tests(&bridge, &signer_key, 1);
 
     let btc_tx_hash = Bytes::from_slice(&env, &[0x22; 64]); // 64-byte hex string
     let btc_amount = 100_000_000i128; // 1 BTC
@@ -409,7 +463,7 @@ fn test_mint_cap_exceeded() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #407)")] // SignerCapExceeded (which means unauthorized if cap is 0/missing)
+#[should_panic(expected = "Error(Contract, #403)")] // Unauthorized (missing signer policy)
 fn test_mint_unauthorized_signer() {
     let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
     
@@ -443,6 +497,80 @@ fn test_mint_unauthorized_signer() {
 }
 
 #[test]
+fn test_mint_window_resets_after_duration() {
+    let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
+
+    let (secret_key, public_key) = generate_keypair();
+    let signer_key = get_signer_cap_key(&env, &public_key);
+    let btc_amount = 100_000_000i128; // 1 BTC
+    let cap = btc_amount;
+    let window_cap = btc_amount.checked_mul(2).expect("window cap overflow");
+    let duration = 3600u64;
+    bridge.set_signer_policy(&signer_key, &cap, &window_cap, &duration);
+
+    let btc_amount_str = Bytes::from_slice(&env, b"1.0");
+    let nav = 100_000_000i128;
+    let nav_str = Bytes::from_slice(&env, b"1.0");
+    let op_return_hash =
+        SolvBTCBridge::compute_op_return_hash(&env, &token.address, &user);
+    let op_hash_hex = SolvBTCBridge::op_return_hash_to_hex_string_bytes(&env, &op_return_hash);
+
+    for i in 0u8..2u8 {
+        let btc_tx_hash = Bytes::from_slice(&env, &[i; 64]);
+        let message = SolvBTCBridge::build_mint_message(
+            &env,
+            &btc_tx_hash,
+            &btc_amount_str,
+            btc_amount,
+            &op_hash_hex,
+            &nav_str,
+            nav,
+            &user,
+            &token.address,
+        );
+        let signature = sign_message(&env, &secret_key, &message);
+
+        bridge.mint(
+            &user,
+            &signature,
+            &btc_tx_hash,
+            &btc_amount,
+            &btc_amount_str,
+            &nav,
+            &nav_str,
+        );
+    }
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = li.timestamp.saturating_add(duration + 1);
+    });
+
+    let btc_tx_hash = Bytes::from_slice(&env, &[9u8; 64]);
+    let message = SolvBTCBridge::build_mint_message(
+        &env,
+        &btc_tx_hash,
+        &btc_amount_str,
+        btc_amount,
+        &op_hash_hex,
+        &nav_str,
+        nav,
+        &user,
+        &token.address,
+    );
+    let signature = sign_message(&env, &secret_key, &message);
+
+    bridge.mint(
+        &user,
+        &signature,
+        &btc_tx_hash,
+        &btc_amount,
+        &btc_amount_str,
+        &nav,
+        &nav_str,
+    );
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #410)")] // NavOutOfRange
 fn test_mint_nav_outdated() {
     let (env, bridge, _admin, token, _oracle, user) = create_test_setup();
@@ -450,7 +578,7 @@ fn test_mint_nav_outdated() {
     let (secret_key, public_key) = generate_keypair();
     let signer_key = get_signer_cap_key(&env, &public_key);
     // Large cap so NAV-outdated error is hit instead of cap
-    bridge.set_signer_cap(&signer_key, &1_000_000_000_000_000_000_000i128);
+    set_signer_policy_for_tests(&bridge, &signer_key, 1_000_000_000_000_000_000_000i128);
     
     // Oracle has 1.0
     // User provides 1.02 (> 1% diff)
@@ -525,31 +653,31 @@ fn test_admin_functions() {
     let new_oracle_id = env.register(MockOracle, ());
     bridge.set_oracle(&new_oracle_id);
 
-    // Set Signer Cap
+    // Set Signer Policy
     let (_secret_key, public_key) = generate_keypair();
     let signer_key = get_signer_cap_key(&env, &public_key);
-    bridge.set_signer_cap(&signer_key, &500);
+    set_signer_policy_for_tests(&bridge, &signer_key, 500);
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #409)")] // InvalidSignerKey
-fn test_set_signer_cap_rejects_invalid_key_format() {
+fn test_set_signer_policy_rejects_invalid_key_format() {
     let (env, bridge, _admin, _token, _oracle, _user) = create_test_setup();
 
     let mut invalid = [0u8; 65];
     invalid[0] = 0x02; // compressed prefix
     let signer = BytesN::from_array(&env, &invalid);
 
-    bridge.set_signer_cap(&signer, &500);
+    bridge.set_signer_policy(&signer, &500, &1000_i128, &3600u64);
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #409)")] // InvalidSignerKey
-fn test_set_signer_cap_rejects_all_zero_key() {
+fn test_set_signer_policy_rejects_all_zero_key() {
     let (env, bridge, _admin, _token, _oracle, _user) = create_test_setup();
 
     let signer = BytesN::from_array(&env, &[0u8; 65]);
-    bridge.set_signer_cap(&signer, &500);
+    bridge.set_signer_policy(&signer, &500, &1000_i128, &3600u64);
 }
 
 #[test]
@@ -570,8 +698,14 @@ fn test_admin_fail_not_owner() {
             address: &rando,
             invoke: &MockAuthInvoke {
                 contract: &bridge_id,
-                fn_name: "set_signer_cap",
-                args: (&BytesN::from_array(&env, &[0u8; 65]), &500_i128).into_val(&env),
+                fn_name: "set_signer_policy",
+                args: (
+                    &BytesN::from_array(&env, &[0u8; 65]),
+                    &500_i128,
+                    &1000_i128,
+                    &3600_u64,
+                )
+                    .into_val(&env),
                 sub_invokes: &[],
             },
         },
@@ -579,7 +713,7 @@ fn test_admin_fail_not_owner() {
 
     let signer = BytesN::from_array(&env, &[0u8; 65]);
     
-    bridge.set_signer_cap(&signer, &500);
+    bridge.set_signer_policy(&signer, &500, &1000_i128, &3600_u64);
 }
 
 #[test]
@@ -745,20 +879,22 @@ fn test_set_oracle_rejects_invalid_decimals_bridge() {
 }
 
 #[test]
-fn test_get_signer_cap() {
+fn test_get_signer_policy() {
     let (env, bridge, _admin, _token, _oracle, _user) = create_test_setup();
     let (_secret_key, public_key) = generate_keypair();
     let signer_key = get_signer_cap_key(&env, &public_key);
     
     // Initially should be 0
-    assert_eq!(bridge.get_signer_cap(&signer_key), 0);
+    assert_eq!(bridge.get_signer_policy(&signer_key), (0, 0, 0));
     
-    // Set cap
+    // Set policy
     let cap = 500_000_000i128;
-    bridge.set_signer_cap(&signer_key, &cap);
+    let window_cap = 500_000_000i128;
+    let duration = 3600u64;
+    bridge.set_signer_policy(&signer_key, &cap, &window_cap, &duration);
     
     // Check if it updates
-    assert_eq!(bridge.get_signer_cap(&signer_key), cap);
+    assert_eq!(bridge.get_signer_policy(&signer_key), (cap, window_cap, duration));
 }
 
 #[test]
