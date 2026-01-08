@@ -1666,10 +1666,9 @@ dependencies = [
 name = "tests"
 version = "1.0.0"
 dependencies = [
- "ed25519-dalek",
  "fungible-token",
- "heapless",
- "rand",
+ "secp256k1",
+ "sha3",
  "solvbtc-oracle",
  "solvbtc-vault",
  "soroban-sdk",
