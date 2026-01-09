@@ -594,22 +594,22 @@ impl SolvBTCBridge {
 
         let common_factor = shares_decimals.min(currency_decimals);
         let nav_scale = 10_i128.pow(nav_decimals);
-
-        let scaled_amount = if shares_decimals >= currency_decimals {
-            let scale = 10_i128.pow(shares_decimals - common_factor);
-            deposit_amount
-                .checked_mul(scale)
-                .unwrap_or_else(|| panic_with_error!(env, BridgeError::InvalidAmount))
+        let (scale_num, scale_den) = if shares_decimals >= currency_decimals {
+            (10_i128.pow(shares_decimals - common_factor), 1_i128)
         } else {
-            let scale = 10_i128.pow(currency_decimals - common_factor);
-            deposit_amount
-                .checked_div(scale)
-                .unwrap_or_else(|| panic_with_error!(env, BridgeError::InvalidAmount))
+            (1_i128, 10_i128.pow(currency_decimals - common_factor))
         };
 
-        let minted = scaled_amount
-            .checked_mul(nav_scale)
-            .and_then(|x| x.checked_div(nav))
+        let numerator = deposit_amount
+            .checked_mul(scale_num)
+            .and_then(|x| x.checked_mul(nav_scale))
+            .unwrap_or_else(|| panic_with_error!(env, BridgeError::InvalidAmount));
+        let denominator = nav
+            .checked_mul(scale_den)
+            .unwrap_or_else(|| panic_with_error!(env, BridgeError::InvalidAmount));
+
+        let minted = numerator
+            .checked_div(denominator)
             .unwrap_or_else(|| panic_with_error!(env, BridgeError::InvalidAmount));
 
         minted
