@@ -42,3 +42,13 @@ jobs:
       package: 'solvbtc-vault'
     secrets:
       release_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build and release bridge contract
+  release-contract-bridge:
+    uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@main
+    with:
+      release_name: ${{ github.ref_name }}
+      release_description: 'SolvBTC Bridge Contract Release'
+      package: 'solvbtc-bridge'
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}
