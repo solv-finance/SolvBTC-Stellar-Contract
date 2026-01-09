@@ -23,6 +23,8 @@ const FEE_PRECISION: i128 = 10000;
 
 /// StrKey address length for Soroban addresses.
 const ADDRESS_STRKEY_LENGTH: usize = 56;
+/// Maximum length for request_hash.
+const MAX_REQUEST_HASH_LEN: usize = 32;
 
 /// Ethereum personal_sign V offset.
 const ETHEREUM_V_OFFSET: u8 = 27;
@@ -102,6 +104,8 @@ pub enum VaultError {
     InvalidDecimals = 316,
     /// Invalid verifier key format or length
     InvalidVerifierKey = 317,
+    /// Invalid request hash length
+    InvalidRequestHashLength = 318,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -287,6 +291,10 @@ impl VaultOperations for SolvBTCVault {
         // Verify parameters
         if shares <= 0 {
             panic_with_error!(env, VaultError::InvalidAmount);
+        }
+        
+        if request_hash.len() as usize > MAX_REQUEST_HASH_LEN {
+            panic_with_error!(env, VaultError::InvalidRequestHashLength);
         }
 
         if nav <= 0 {
@@ -736,14 +744,14 @@ impl SolvBTCVault {
     }
 
     fn bytes_to_hex_string_bytes(env: &Env, data: &Bytes) -> Bytes {
-        let len = data.len() as usize;
-        let mut buf = [0u8; 32];
+        let len: usize = data.len() as usize;
+        let mut buf = [0u8; MAX_REQUEST_HASH_LEN];
         if len > buf.len() {
-            panic_with_error!(env, VaultError::InvalidVerifierKey);
+            panic_with_error!(env, VaultError::InvalidRequestHashLength);
         }
         data.copy_into_slice(&mut buf[..len]);
 
-        let mut hex_buf = [0u8; 64];
+        let mut hex_buf = [0u8; MAX_REQUEST_HASH_LEN * 2];
         let hex_chars = b"0123456789abcdef";
 
         for i in 0..len {
@@ -1148,6 +1156,9 @@ impl SolvBTCVault {
         // Verify parameters
         if shares <= 0 {
             panic_with_error!(env, VaultError::InvalidAmount);
+        }
+        if request_hash.len() as usize > MAX_REQUEST_HASH_LEN {
+            panic_with_error!(env, VaultError::InvalidRequestHashLength);
         }
 
         // Get current nav from oracle
