@@ -54,7 +54,6 @@ const BTC_TX_HASH_TTL_EXTEND_TO: u32 = 180 * LEDGERS_PER_DAY;
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BridgeDataKey {
-    Admin,
     Token,
     Oracle,
     SignerPolicy(BytesN<65>), // SignerPolicy per signer for each secp256k1 key
