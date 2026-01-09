@@ -1,4 +1,4 @@
-use soroban_sdk::{contractclient, contracttype, Address, Bytes, BytesN, Env, String, Vec};
+use soroban_sdk::{contractclient, contracttype, Address, Bytes, BytesN, Env, Vec};
 
 // ==================== Deposit and Withdrawal Functions ====================
 
@@ -44,9 +44,7 @@ pub trait VaultOperations {
         shares: i128,
         nav: i128,
         request_hash: Bytes,
-        signature: BytesN<64>,
-        signature_type: u32,
-        recovery_id: u32,
+        signature: BytesN<65>,
     ) -> i128;
 
     /// Withdraw request
@@ -87,10 +85,9 @@ pub trait CurrencyManagement {
 
 /// System management trait
 pub trait SystemManagement {
-    /// Set withdrawal verifier by admin for specific signature type
-    /// - signature_type: 0 = Ed25519 (32 bytes), 1 = Secp256k1 (65 bytes uncompressed)
-    /// - verifier_public_key: Public key bytes (size depends on signature type)
-    fn set_withdraw_verifier_by_admin(env: Env, signature_type: u32, verifier_public_key: Bytes);
+    /// Set withdrawal verifier by admin (Secp256k1 only)
+    /// - verifier_public_key: Secp256k1 uncompressed public key (65 bytes, starts with 0x04)
+    fn set_withdraw_verifier_by_admin(env: Env, verifier_public_key: BytesN<65>);
 
     /// Set Oracle by admin
     fn set_oracle_by_admin(env: Env, oracle: Address);
@@ -115,9 +112,9 @@ pub trait VaultQuery {
     /// Get admin address
     fn get_admin(env: Env) -> Address;
 
-    /// Get withdrawal verifier by signature type
-    /// Returns the public key bytes for the specified signature type, or None if not set
-    fn get_withdraw_verifier(env: Env, signature_type: u32) -> Option<Bytes>;
+    /// Get withdrawal verifier (Secp256k1 uncompressed public key)
+    /// Returns the 65-byte public key, or None if not set
+    fn get_withdraw_verifier(env: Env) -> Option<BytesN<65>>;
 
     /// Get Oracle address
     fn get_oracle(env: Env) -> Address;

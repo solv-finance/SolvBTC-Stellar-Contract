@@ -85,10 +85,7 @@ fn create_vault_contract(env: &Env) -> (SolvBTCVaultClient, Address, Address) {
         ),
     );
 
-    // Generate a random 32-byte public key for withdraw verifier
-    let mut verifier_bytes = [0u8; 32];
-    verifier_bytes[0] = 1; // Set first byte to make it non-zero
-    let withdraw_verifier = BytesN::from_array(env, &verifier_bytes);
+    let withdraw_verifier = mock_secp256k1_pubkey(env);
     let withdraw_fee_ratio = 100i128;
 
     let contract_address = env.register(
@@ -115,6 +112,15 @@ fn create_mock_public_key(env: &Env) -> Address {
 
     // Create Address object from string
     Address::from_str(env, stellar_address)
+}
+
+fn mock_secp256k1_pubkey(env: &Env) -> BytesN<65> {
+    let mut bytes = [0u8; 65];
+    bytes[0] = 0x04;
+    for i in 1..65 {
+        bytes[i] = i as u8;
+    }
+    BytesN::from_array(env, &bytes)
 }
 
 // Helper function: Create mock Ed25519 signature (64 bytes)
@@ -199,7 +205,7 @@ struct TestConfig {
     admin: Address,
     oracle: Address,
     treasurer: Address,
-    withdraw_verifier: BytesN<32>,
+    withdraw_verifier: BytesN<65>,
     withdraw_fee_ratio: i128,
     withdraw_fee_receiver: Address,
 }
@@ -209,8 +215,7 @@ fn read_config_from_chain(_env: &Env, client: &SolvBTCVaultClient) -> TestConfig
         admin: client.get_admin(),
         oracle: client.get_oracle(),
         treasurer: client.get_treasurer(),
-        withdraw_verifier: BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap())
-            .unwrap(),
+        withdraw_verifier: client.get_withdraw_verifier().unwrap(),
         withdraw_fee_ratio: client.get_withdraw_fee_ratio(),
         withdraw_fee_receiver: client.get_withdraw_fee_receiver(),
     }
@@ -233,7 +238,7 @@ fn create_custom_init_config(
         admin: admin_addr,
         oracle: Address::generate(env),
         treasurer: Address::generate(env),
-        withdraw_verifier: BytesN::from_array(env, &[1u8; 32]),
+        withdraw_verifier: mock_secp256k1_pubkey(env),
         withdraw_fee_ratio: ratio,
         withdraw_fee_receiver: Address::generate(env),
     }
@@ -252,23 +257,22 @@ fn test_withdraw_verifier_key_management() {
 
     // Verify initial verifier public key
     assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        client.get_withdraw_verifier().unwrap(),
         initial_verifier_pubkey
     );
 
-    let updated_verifier_pubkey = BytesN::from_array(&env, &[5u8; 32]);
+    let mut updated_bytes = [0u8; 65];
+    updated_bytes[0] = 0x04;
+    for i in 1..65 {
+        updated_bytes[i] = 5u8;
+    }
+    let updated_verifier_pubkey = BytesN::from_array(&env, &updated_bytes);
 
-    client.set_withdraw_verifier_by_admin(&0u32, &updated_verifier_pubkey.clone().into());
+    client.set_withdraw_verifier_by_admin(&updated_verifier_pubkey);
 
     // Verify verifier public key has been updated
-    assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
-        updated_verifier_pubkey
-    );
-    assert_ne!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
-        initial_verifier_pubkey
-    );
+    assert_eq!(client.get_withdraw_verifier().unwrap(), updated_verifier_pubkey);
+    assert_ne!(client.get_withdraw_verifier().unwrap(), initial_verifier_pubkey);
 }
 
 #[test]
@@ -277,11 +281,7 @@ fn test_withdraw_invalid_signature_content() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client, _vault_addr, _token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks_full(&env);
-
-    let (_sk, vk) = fixed_keypair();
-    let verifier_public_key = public_key_from_verifying_key(&env, &vk);
-    client.set_withdraw_verifier_by_admin(&0u32, &verifier_public_key.clone().into());
+    let (client, _, _, _) = create_vault_with_mocks(&env);
 
     let user = Address::generate(&env);
     let shares = 50_000_000i128;
@@ -289,7 +289,9 @@ fn test_withdraw_invalid_signature_content() {
     let request_hash = create_request_hash(&env, 1);
     client.withdraw_request(&user, &shares, &request_hash);
 
-    let invalid_signature = BytesN::<64>::from_array(&env, &[0u8; 64]);
+    // Invalid signature should cause panic during secp256k1 recovery
+    // 65 bytes: 64 bytes r,s + 1 byte v (recovery_id)
+    let invalid_signature = BytesN::<65>::from_array(&env, &[0u8; 65]);
 
     client.withdraw(
         &user,
@@ -297,8 +299,6 @@ fn test_withdraw_invalid_signature_content() {
         &nav,
         &request_hash,
         &invalid_signature,
-        &0u32,
-        &0u32,
     );
 }
 
@@ -319,7 +319,7 @@ fn test_basic_initialize_success() {
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
     assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        client.get_withdraw_verifier().unwrap(),
         config.withdraw_verifier
     );
     assert_eq!(client.get_withdraw_fee_ratio(), 100);
@@ -343,7 +343,7 @@ fn test_initialize_with_default_config() {
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
     assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        client.get_withdraw_verifier().unwrap(),
         config.withdraw_verifier
     );
     assert_eq!(client.get_withdraw_fee_ratio(), config.withdraw_fee_ratio);
@@ -688,7 +688,7 @@ fn create_vault_with_mocks(env: &Env) -> (SolvBTCVaultClient, Address, Address, 
     let oracle_addr = register_mock_oracle(env);
     let treasurer = Address::generate(env);
     // Use a temporary verifier; will be updated later
-    let verifier = BytesN::from_array(env, &[0; 32]);
+    let verifier = mock_secp256k1_pubkey(env);
 
     let contract_address = env.register(
         SolvBTCVault,
@@ -711,12 +711,6 @@ fn create_vault_with_mocks(env: &Env) -> (SolvBTCVaultClient, Address, Address, 
     (client, token_addr, oracle_addr, treasurer)
 }
 
-fn create_vault_with_mocks_full(env: &Env) -> (SolvBTCVaultClient, Address, Address, Address, Address) {
-    let (client, token_addr, oracle_addr, treasurer) = create_vault_with_mocks(env);
-    let vault_addr = client.address.clone();
-    (client, vault_addr, token_addr, oracle_addr, treasurer)
-}
-
 /// Build a vault with withdraw_fee_ratio = 0 in constructor
 fn create_vault_with_zero_fee(env: &Env) -> (SolvBTCVaultClient, Address, Address, Address) {
     env.mock_all_auths();
@@ -724,7 +718,7 @@ fn create_vault_with_zero_fee(env: &Env) -> (SolvBTCVaultClient, Address, Addres
     let token_addr = register_mock_token(env);
     let oracle_addr = register_mock_oracle(env);
     let treasurer = Address::generate(env);
-    let verifier = BytesN::from_array(env, &[0; 32]);
+    let verifier = mock_secp256k1_pubkey(env);
 
     let contract_address = env.register(
         SolvBTCVault,
@@ -750,7 +744,7 @@ fn create_vault_with_oracle(env: &Env, oracle_addr: Address) -> (SolvBTCVaultCli
     let admin = Address::generate(env);
     let token_addr = register_mock_token(env);
     let treasurer = Address::generate(env);
-    let verifier = BytesN::from_array(env, &[0; 32]);
+    let verifier = mock_secp256k1_pubkey(env);
 
     let contract_address = env.register(
         SolvBTCVault,
@@ -809,183 +803,8 @@ fn test_treasurer_deposit_success() {
     client.treasurer_deposit(&50_000_000i128);
 }
 
-#[test]
-fn test_withdraw_success_various_fee_ratios() {
-    let env = Env::default();
-    env.mock_all_auths();
+// Ed25519 withdraw tests removed - only Secp256k1 is now supported
 
-    let (client, token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
-
-    // Set verifier
-    let (sk, vk) = fixed_keypair();
-    let verifier_public_key = public_key_from_verifying_key(&env, &vk);
-    client.set_withdraw_verifier_by_admin(&0u32, &verifier_public_key.clone().into());
-
-    // Try a few fee ratios
-    for fee in [300i128, 1000i128] {
-        // 3%, 10%
-        client.set_withdraw_fee_ratio_by_admin(&fee);
-
-        let user = Address::generate(&env);
-        let shares = 100_000_000i128; // 1 share
-        let nav = 100_000_000i128; // 1.0 NAV
-        let request_hash = create_request_hash(&env, fee as u64 + 7);
-        client.withdraw_request(&user, &shares, &request_hash);
-
-        let msg = build_withdraw_message(
-            &env,
-            &client.address,
-            &user,
-            shares,
-            &token_addr,
-            nav,
-            &request_hash,
-        );
-        let sig = sk.sign(&bytes_to_vec(&msg));
-        let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
-
-        let out = client.withdraw(
-            &user,
-            &shares,
-            &nav,
-            &request_hash,
-            &sig_bytes,
-            &0u32,
-            &0u32,
-        );
-        assert!(out >= 0);
-    }
-}
-
-#[test]
-fn test_withdraw_success_precision_scenarios() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
-
-    // Verifier
-    let (sk, vk) = fixed_keypair();
-    let verifier_public_key = public_key_from_verifying_key(&env, &vk);
-    client.set_withdraw_verifier_by_admin(&0u32, &verifier_public_key.clone().into());
-
-    // Use 5% fee
-    client.set_withdraw_fee_ratio_by_admin(&500);
-
-    // Two scenarios with different shares
-    for (shares, nonce) in [(50_000_000i128, 11u64), (200_000_000i128, 12u64)] {
-        let user = Address::generate(&env);
-        let nav = 100_000_000i128; // 1.0
-        let request_hash = create_request_hash(&env, nonce);
-        client.withdraw_request(&user, &shares, &request_hash);
-
-        let msg = build_withdraw_message(
-            &env,
-            &client.address,
-            &user,
-            shares,
-            &token_addr,
-            nav,
-            &request_hash,
-        );
-        let sig = sk.sign(&bytes_to_vec(&msg));
-        let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
-
-        let out = client.withdraw(
-            &user,
-            &shares,
-            &nav,
-            &request_hash,
-            &sig_bytes,
-            &0u32,
-            &0u32,
-        );
-        assert!(out > 0);
-    }
-}
-
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-
-fn fixed_keypair() -> (SigningKey, VerifyingKey) {
-    let seed: [u8; 32] = [
-        0xef, 0xab, 0x69, 0x6a, 0x8c, 0xaf, 0x7a, 0x70, 0xc4, 0x2e, 0xe5, 0x39, 0x70, 0x5b, 0x4a,
-        0x74, 0x7e, 0x5d, 0x6e, 0x1b, 0xb2, 0x6b, 0x3d, 0xd5, 0x2e, 0x38, 0xba, 0xf7, 0x29, 0xe3,
-        0xdb, 0x3b,
-    ];
-    let sk = SigningKey::from(seed);
-    let vk = VerifyingKey::from(&sk);
-    (sk, vk)
-}
-
-fn public_key_from_verifying_key(env: &Env, vk: &VerifyingKey) -> BytesN<32> {
-    BytesN::from_array(env, &vk.to_bytes())
-}
-
-fn build_withdraw_message(
-    env: &Env,
-    vault_addr: &Address,
-    user: &Address,
-    target_amount: i128,
-    target_token: &Address,
-    nav: i128,
-    request_hash: &Bytes,
-) -> Bytes {
-    env.as_contract(vault_addr, || {
-        SolvBTCVault::create_withdraw_string_message(
-            env,
-            user,
-            target_amount,
-            target_token,
-            nav,
-            request_hash,
-        )
-    })
-}
-
-fn bytes_to_vec(bytes: &Bytes) -> std::vec::Vec<u8> {
-    let mut out = std::vec::Vec::with_capacity(bytes.len() as usize);
-    for i in 0..bytes.len() {
-        out.push(bytes.get(i).unwrap());
-    }
-    out
-}
-
-#[test]
-fn test_withdraw_success_end_to_end() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, vault_addr, token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks_full(&env);
-
-    // Set verifier matching our verifying key
-    let (sk, vk) = fixed_keypair();
-    let verifier_public_key = public_key_from_verifying_key(&env, &vk);
-    client.set_withdraw_verifier_by_admin(&0u32, &verifier_public_key.clone().into());
-
-    // Prepare withdraw request
-    let user = Address::generate(&env);
-    let shares = 50_000_000i128; // 0.5 shares
-    let nav = 100_000_000i128; // 1.0 NAV (8 decimals)
-    let request_hash = create_request_hash(&env, 42);
-    client.withdraw_request(&user, &shares, &request_hash);
-
-    // Build message and sign
-    let msg = build_withdraw_message(&env, &vault_addr, &user, shares, &token_addr, nav, &request_hash);
-    let sig = sk.sign(&bytes_to_vec(&msg));
-    let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
-
-    // Execute withdraw
-    let actual = client.withdraw(
-        &user,
-        &shares,
-        &nav,
-        &request_hash,
-        &sig_bytes,
-        &0u32,
-        &0u32,
-    );
-    assert!(actual > 0);
-}
 /// Test add currency authorization check
 #[test]
 fn test_add_currency_authorization() {
@@ -1289,7 +1108,7 @@ fn test_system_management_traits() {
 
     // Test all getter functions
     assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        client.get_withdraw_verifier().unwrap(),
         config.withdraw_verifier
     );
     assert_eq!(client.get_treasurer(), config.treasurer);
@@ -1466,23 +1285,25 @@ fn test_complete_system_management() {
     // Test setting all system components
     let new_oracle = create_mock_oracle(&env);
     let new_treasurer = Address::generate(&env);
-    let new_verifier = BytesN::from_array(&env, &[4u8; 32]);
+    let mut new_verifier_bytes = [0u8; 65];
+    new_verifier_bytes[0] = 0x04;
+    for i in 1..65 {
+        new_verifier_bytes[i] = 4u8;
+    }
+    let new_verifier = BytesN::from_array(&env, &new_verifier_bytes);
     let new_fee_receiver = Address::generate(&env);
 
     // Set new addresses
     client.set_oracle_by_admin(&new_oracle);
     client.set_treasurer_by_admin(&new_treasurer);
-    client.set_withdraw_verifier_by_admin(&0u32, &new_verifier.clone().into());
+    client.set_withdraw_verifier_by_admin(&new_verifier);
     client.set_withdraw_fee_recv_by_admin(&new_fee_receiver);
     client.set_withdraw_fee_ratio_by_admin(&250);
 
     // Verify all were set correctly
     assert_eq!(client.get_oracle(), new_oracle);
     assert_eq!(client.get_treasurer(), new_treasurer);
-    assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
-        new_verifier
-    );
+    assert_eq!(client.get_withdraw_verifier().unwrap(), new_verifier);
     assert_eq!(client.get_withdraw_fee_receiver(), new_fee_receiver);
     assert_eq!(client.get_withdraw_fee_ratio(), 250);
 }
@@ -1530,7 +1351,7 @@ fn test_initialize_config_structure() {
         admin: Address::generate(&env),
         oracle: Address::generate(&env),
         treasurer: Address::generate(&env),
-        withdraw_verifier: BytesN::from_array(&env, &[2u8; 32]),
+        withdraw_verifier: mock_secp256k1_pubkey(&env),
         withdraw_fee_ratio: 250,
         withdraw_fee_receiver: Address::generate(&env),
     };
@@ -1722,11 +1543,11 @@ fn test_withdraw_invalid_request_status() {
     let (client, _token, _oracle, _treasurer) = create_vault_with_mocks(&env);
     let user = Address::generate(&env);
     let request_hash = Bytes::from_array(&env, &[1u8; 32]);
-    let mock_signature = BytesN::<64>::from_array(&env, &[0u8; 64]);
+    let mock_signature = BytesN::<65>::from_array(&env, &[0u8; 65]);
     let nav = 100_000_000i128;
 
     // Try to withdraw without creating request first
-    // Call and expect InvalidRequestStatus (#27)
+    // Call and expect InvalidRequestStatus (#311)
     #[allow(unused_must_use)]
     {
         client.withdraw(
@@ -1735,8 +1556,6 @@ fn test_withdraw_invalid_request_status() {
             &nav,
             &request_hash,
             &mock_signature,
-            &0u32,
-            &0u32,
         );
     }
 }
@@ -1769,9 +1588,9 @@ fn test_withdraw_with_zero_withdraw_fee_ratio_should_panic() {
     let user = Address::generate(&env);
     let nav = 100_000_000i128;
     let request_hash = create_request_hash(&env, 778);
-    let dummy_sig = BytesN::<64>::from_array(&env, &[0u8; 64]);
+    let dummy_sig = BytesN::<65>::from_array(&env, &[0u8; 65]);
     // Should panic due to invalid request status
-    client.withdraw(&user, &1000, &nav, &request_hash, &dummy_sig, &0u32, &0u32);
+    client.withdraw(&user, &1000, &nav, &request_hash, &dummy_sig);
 }
 
 /// Test withdraw with invalid amount (shares == 0)
@@ -1784,7 +1603,7 @@ fn test_withdraw_invalid_amount_zero() {
     let (client, _token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
     let user = Address::generate(&env);
     let request_hash = create_request_hash(&env, 1001);
-    let signature = BytesN::<64>::from_array(&env, &[0u8; 64]);
+    let signature = BytesN::<65>::from_array(&env, &[0u8; 65]);
 
     let shares = 0i128;
     let nav = 100_000_000i128;
@@ -1794,8 +1613,6 @@ fn test_withdraw_invalid_amount_zero() {
         &nav,
         &request_hash,
         &signature,
-        &0u32,
-        &0u32,
     );
 }
 
@@ -1809,7 +1626,7 @@ fn test_withdraw_invalid_nav_zero() {
     let (client, _token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks(&env);
     let user = Address::generate(&env);
     let request_hash = create_request_hash(&env, 1002);
-    let signature = BytesN::<64>::from_array(&env, &[0u8; 64]);
+    let signature = BytesN::<65>::from_array(&env, &[0u8; 65]);
 
     let shares = 1i128;
     let nav = 0i128;
@@ -1819,8 +1636,6 @@ fn test_withdraw_invalid_nav_zero() {
         &nav,
         &request_hash,
         &signature,
-        &0u32,
-        &0u32,
     );
 }
 
@@ -2088,7 +1903,7 @@ fn test_vault_query_functions_comprehensive() {
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
     assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        client.get_withdraw_verifier().unwrap(),
         config.withdraw_verifier
     );
     assert_eq!(client.get_withdraw_fee_ratio(), config.withdraw_fee_ratio);
@@ -2125,7 +1940,7 @@ fn test_error_conditions_comprehensive() {
     assert_eq!(client.get_oracle(), config.oracle);
     assert_eq!(client.get_treasurer(), config.treasurer);
     assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
+        client.get_withdraw_verifier().unwrap(),
         config.withdraw_verifier
     );
 
@@ -2143,22 +1958,18 @@ fn test_signature_verification_edge_cases() {
     let (client, _, _) = create_vault_contract(&env);
 
     // Test verifier key management
-    let new_verifier = BytesN::from_array(&env, &[4u8; 32]);
-    client.set_withdraw_verifier_by_admin(&0u32, &new_verifier.clone().into());
-    assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
-        new_verifier
-    );
+    let mut new_verifier_bytes = [0u8; 65];
+    new_verifier_bytes[0] = 0x04;
+    for i in 1..65 {
+        new_verifier_bytes[i] = 4u8;
+    }
+    let new_verifier = BytesN::from_array(&env, &new_verifier_bytes);
+    client.set_withdraw_verifier_by_admin(&new_verifier);
+    assert_eq!(client.get_withdraw_verifier().unwrap(), new_verifier);
 
     // Test getting withdraw verifier multiple times
-    assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
-        new_verifier
-    );
-    assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
-        new_verifier
-    );
+    assert_eq!(client.get_withdraw_verifier().unwrap(), new_verifier);
+    assert_eq!(client.get_withdraw_verifier().unwrap(), new_verifier);
 }
 
 /// Test domain domain and chain operations
@@ -2205,12 +2016,14 @@ fn test_system_configuration_management() {
     client.set_treasurer_by_admin(&new_treasurer);
     assert_eq!(client.get_treasurer(), new_treasurer);
 
-    let new_verifier = BytesN::from_array(&env, &[4u8; 32]);
-    client.set_withdraw_verifier_by_admin(&0u32, &new_verifier.clone().into());
-    assert_eq!(
-        BytesN::<32>::try_from(client.get_withdraw_verifier(&0u32).unwrap()).unwrap(),
-        new_verifier
-    );
+    let mut new_verifier_bytes = [0u8; 65];
+    new_verifier_bytes[0] = 0x04;
+    for i in 1..65 {
+        new_verifier_bytes[i] = 4u8;
+    }
+    let new_verifier = BytesN::from_array(&env, &new_verifier_bytes);
+    client.set_withdraw_verifier_by_admin(&new_verifier);
+    assert_eq!(client.get_withdraw_verifier().unwrap(), new_verifier);
 
     // Test fee management
     client.set_withdraw_fee_ratio_by_admin(&200);
@@ -2268,9 +2081,7 @@ fn test_set_deposit_fee_ratio_by_admin() {
     let token_contract = create_mock_token(&env, "SolvBTC", "SOLVBTC");
     let oracle = create_mock_oracle(&env);
     let treasurer = Address::generate(&env);
-    let mut verifier_bytes = [0u8; 32];
-    verifier_bytes[0] = 1;
-    let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
     let initial_deposit_fee = 100i128; // 1%
     let withdraw_fee_ratio = 50i128;
     let withdraw_fee_receiver = Address::generate(&env);
@@ -2326,9 +2137,7 @@ fn test_set_deposit_fee_ratio_invalid() {
     let token_contract = create_mock_token(&env, "SolvBTC", "SOLVBTC");
     let oracle = create_mock_oracle(&env);
     let treasurer = Address::generate(&env);
-    let mut verifier_bytes = [0u8; 32];
-    verifier_bytes[0] = 1;
-    let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
     let deposit_fee_ratio = 100i128;
     let withdraw_fee_ratio = 50i128;
     let withdraw_fee_receiver = Address::generate(&env);
@@ -2368,9 +2177,7 @@ fn test_set_deposit_fee_ratio_negative() {
     let token_contract = create_mock_token(&env, "SolvBTC", "SOLVBTC");
     let oracle = create_mock_oracle(&env);
     let treasurer = Address::generate(&env);
-    let mut verifier_bytes = [0u8; 32];
-    verifier_bytes[0] = 1;
-    let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
     let deposit_fee_ratio = 100i128;
     let withdraw_fee_ratio = 50i128;
     let withdraw_fee_receiver = Address::generate(&env);
@@ -2409,9 +2216,7 @@ fn test_get_deposit_fee_ratio() {
     let token_contract = create_mock_token(&env, "SolvBTC", "SOLVBTC");
     let oracle = create_mock_oracle(&env);
     let treasurer = Address::generate(&env);
-    let mut verifier_bytes = [0u8; 32];
-    verifier_bytes[0] = 1;
-    let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
     let deposit_fee_ratio = 250i128; // 2.5%
     let withdraw_fee_ratio = 50i128;
     let withdraw_fee_receiver = Address::generate(&env);
@@ -2455,7 +2260,7 @@ fn test_get_token_contract_returns_constructor_value() {
     let token_contract = create_mock_token(&env, "SolvBTC", "SOLVBTC");
     let oracle = create_mock_oracle(&env);
     let treasurer = Address::generate(&env);
-    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
     let withdraw_fee_ratio = 100i128;
     let withdraw_fee_receiver = Address::generate(&env);
     let withdraw_currency = create_mock_token(&env, "WBTC", "WBTC");
@@ -2488,7 +2293,7 @@ fn test_constructor_with_negative_withdraw_fee_ratio() {
     let token_contract = create_mock_token(&env, "SolvBTC", "SOLVBTC");
     let oracle = create_mock_oracle(&env);
     let treasurer = Address::generate(&env);
-    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
     let withdraw_fee_ratio = -1i128; // Negative fee ratio should panic
     let withdraw_fee_receiver = Address::generate(&env);
     let withdraw_currency = create_mock_token(&env, "WBTC", "WBTC");
@@ -2518,7 +2323,7 @@ fn test_constructor_with_excessive_withdraw_fee_ratio() {
     let token_contract = create_mock_token(&env, "SolvBTC", "SOLVBTC");
     let oracle = create_mock_oracle(&env);
     let treasurer = Address::generate(&env);
-    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
     let withdraw_fee_ratio = 10001i128; // Over 100% fee ratio should panic
     let withdraw_fee_receiver = Address::generate(&env);
     let withdraw_currency = create_mock_token(&env, "WBTC", "WBTC");
@@ -2548,7 +2353,7 @@ fn test_constructor_with_negative_deposit_fee_ratio() {
     let token_contract = create_mock_token(&env, "SolvBTC", "SOLVBTC");
     let oracle = create_mock_oracle(&env);
     let treasurer = Address::generate(&env);
-    let withdraw_verifier = BytesN::from_array(&env, &[1u8; 32]);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
     let deposit_fee_ratio = -1i128; // Negative deposit fee ratio should panic
     let withdraw_fee_ratio = 100i128;
     let withdraw_fee_receiver = Address::generate(&env);
@@ -2574,46 +2379,7 @@ fn test_constructor_with_negative_deposit_fee_ratio() {
     client.add_currency_by_admin(&currency, &deposit_fee_ratio);
 }
 
-/// Test unified withdraw with Ed25519 signature (type = 0)
-#[test]
-fn test_unified_withdraw_ed25519() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, vault_addr, token_addr, _oracle_addr, _treasurer) = create_vault_with_mocks_full(&env);
-
-    // Set Ed25519 verifier
-    let (sk, vk) = fixed_keypair();
-    let verifier_public_key = public_key_from_verifying_key(&env, &vk);
-    // Use signature_type = 0 for Ed25519
-    client.set_withdraw_verifier_by_admin(&0u32, &verifier_public_key.clone().into());
-
-    // Prepare withdraw request
-    let user = Address::generate(&env);
-    let shares = 50_000_000i128;
-    let nav = 100_000_000i128;
-    let request_hash = create_request_hash(&env, 42);
-    client.withdraw_request(&user, &shares, &request_hash);
-
-    // Build message and sign with Ed25519
-    let msg = build_withdraw_message(&env, &vault_addr, &user, shares, &token_addr, nav, &request_hash);
-    let sig = sk.sign(&bytes_to_vec(&msg));
-    let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
-
-    // Execute withdraw with signature_type = 0 (Ed25519)
-    let actual = client.withdraw(
-        &user,
-        &shares,
-        &nav,
-        &request_hash,
-        &sig_bytes,
-        &0u32, // signature_type = Ed25519
-        &0u32, // recovery_id (ignored for Ed25519)
-    );
-    assert!(actual > 0);
-}
-
-/// Test unified withdraw with Secp256k1 signature (type = 1)
+/// Test unified withdraw with Secp256k1 signature
 #[test]
 fn test_unified_withdraw_secp256k1_interface() {
     let env = Env::default();
@@ -2627,14 +2393,13 @@ fn test_unified_withdraw_secp256k1_interface() {
     for i in 1..65 {
         pubkey_bytes[i] = i as u8;
     }
-    let verifier_public_key = Bytes::from_slice(&env, &pubkey_bytes);
-    // Use signature_type = 1 for Secp256k1
-    client.set_withdraw_verifier_by_admin(&1u32, &verifier_public_key);
+    let verifier_public_key = BytesN::<65>::from_array(&env, &pubkey_bytes);
+    client.set_withdraw_verifier_by_admin(&verifier_public_key);
 
     // Verify the verifier was set correctly
-    let stored_verifier = client.get_withdraw_verifier(&1u32).unwrap();
-    assert_eq!(stored_verifier.len(), 65);
-    assert_eq!(stored_verifier.get(0).unwrap(), 0x04);
+    let stored_verifier = client.get_withdraw_verifier().unwrap();
+    assert_eq!(stored_verifier.to_array().len(), 65);
+    assert_eq!(stored_verifier.to_array()[0], 0x04);
 }
 
 /// Exercise secp256k1 verification branch with invalid signature (should panic)
@@ -2646,15 +2411,6 @@ fn test_withdraw_secp256k1_invalid_signature_should_panic() {
 
     let (client, _, _, _) = create_vault_with_mocks(&env);
 
-    // Configure a 65-byte uncompressed secp256k1 public key
-    let mut pubkey_bytes = [0u8; 65];
-    pubkey_bytes[0] = 0x04;
-    for i in 1..65 {
-        pubkey_bytes[i] = i as u8;
-    }
-    let verifier_public_key = Bytes::from_slice(&env, &pubkey_bytes);
-    client.set_withdraw_verifier_by_admin(&1u32, &verifier_public_key);
-
     // Prepare a withdraw request first
     let user = Address::generate(&env);
     let shares = 50_000_000i128;
@@ -2662,226 +2418,36 @@ fn test_withdraw_secp256k1_invalid_signature_should_panic() {
     let request_hash = create_request_hash(&env, 7);
     client.withdraw_request(&user, &shares, &request_hash);
 
-    // Invalid signature (all zeros) and a dummy recovery id
-    let sig_bytes = BytesN::<64>::from_array(&env, &[0u8; 64]);
+    // Invalid signature (all zeros): 64 bytes r,s + 1 byte v
+    let sig_bytes = BytesN::<65>::from_array(&env, &[0u8; 65]);
 
-    // Call withdraw with signature_type = 1 (secp256k1) -> should panic inside secp recover/compare
+    // Call withdraw -> should panic inside secp recover/compare
     client.withdraw(
         &user,
         &shares,
         &nav,
         &request_hash,
         &sig_bytes,
-        &1u32, // secp256k1
-        &0u32, // recovery id
     );
 }
 
-/// Test invalid signature type handling
+/// Test get_withdraw_verifier returns verifier from constructor
 #[test]
-#[should_panic]
-fn test_unified_withdraw_invalid_signature_type() {
+fn test_get_withdraw_verifier_from_constructor() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (client, _, _, _) = create_vault_with_mocks(&env);
 
-    let user = Address::generate(&env);
-    let shares = 50_000_000i128;
-    let nav = 100_000_000i128;
-    let request_hash = create_request_hash(&env, 42);
-
-    // Prepare request first
-    client.withdraw_request(&user, &shares, &request_hash);
-
-    // Mock signature
-    let sig_bytes = BytesN::<64>::from_array(&env, &[0u8; 64]);
-
-    // Try with invalid signature type (e.g., 99)
-    let invalid_type = 99u32;
-
-    // This should panic
-    client.withdraw(
-        &user,
-        &shares,
-        &nav,
-        &request_hash,
-        &sig_bytes,
-        &invalid_type,
-        &0u32,
-    );
-}
-
-/// Test get_withdraw_verifier returns None for unset verifier
-#[test]
-fn test_get_withdraw_verifier_not_set() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _, _, _) = create_vault_with_mocks(&env);
-
-    // Type 0 (Ed25519) should be set from constructor
-    let ed25519_verifier = client.get_withdraw_verifier(&0u32);
+    // Secp256k1 verifier should be set from constructor
+    let verifier = client.get_withdraw_verifier();
     assert!(
-        ed25519_verifier.is_some(),
-        "Ed25519 verifier should be set from constructor"
-    );
-
-    // Type 1 (Secp256k1) should NOT be set
-    let secp256k1_verifier = client.get_withdraw_verifier(&1u32);
-    assert!(
-        secp256k1_verifier.is_none(),
-        "Secp256k1 verifier should return None when not set"
-    );
-
-    // Type 99 (invalid) should also return None
-    let invalid_verifier = client.get_withdraw_verifier(&99u32);
-    assert!(
-        invalid_verifier.is_none(),
-        "Invalid signature type should return None"
+        verifier.is_some(),
+        "Secp256k1 verifier should be set from constructor"
     );
 }
 
-/// Test withdraw fails with WithdrawVerifierNotSet error when verifier not set
-#[test]
-#[should_panic(expected = "Error(Contract, #315)")]
-fn test_withdraw_with_unset_verifier_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _, _, _) = create_vault_with_mocks(&env);
-
-    // Setup
-    let user = Address::generate(&env);
-    let shares = 50_000_000i128;
-    let nav = 100_000_000i128;
-
-    // Create withdraw request
-    let request_hash = create_request_hash(&env, 99);
-    client.withdraw_request(&user, &shares, &request_hash);
-
-    // Create Secp256k1 signature (64 bytes, but verifier not set)
-    let sig_bytes = BytesN::<64>::from_array(&env, &[0u8; 64]);
-
-    // Try to withdraw with Secp256k1 (type 1) when verifier not set
-    // This should panic with WithdrawVerifierNotSet
-    client.withdraw(
-        &user,
-        &shares,
-        &nav,
-        &request_hash,
-        &sig_bytes,
-        &1u32, // Secp256k1 - not set!
-        &0u32,
-    );
-}
-
-/// Test setting verifiers for different signature types
-#[test]
-fn test_set_multiple_verifier_types() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _, _) = create_vault_contract(&env);
-
-    // Set Ed25519 verifier (32 bytes)
-    let ed25519_key = BytesN::<32>::from_array(&env, &[1u8; 32]);
-    client.set_withdraw_verifier_by_admin(&0u32, &ed25519_key.clone().into());
-
-    // Set Secp256k1 verifier (65 bytes)
-    let mut secp256k1_key_bytes = [0u8; 65];
-    secp256k1_key_bytes[0] = 0x04; // Uncompressed prefix
-    for i in 1..65 {
-        secp256k1_key_bytes[i] = (i * 2) as u8;
-    }
-    let secp256k1_key = Bytes::from_slice(&env, &secp256k1_key_bytes);
-    client.set_withdraw_verifier_by_admin(&1u32, &secp256k1_key);
-
-    // Verify both are stored correctly
-    let stored_ed25519 = client.get_withdraw_verifier(&0u32).unwrap();
-    assert_eq!(stored_ed25519.len(), 32);
-    assert_eq!(stored_ed25519.get(0).unwrap(), 1);
-
-    let stored_secp256k1 = client.get_withdraw_verifier(&1u32).unwrap();
-    assert_eq!(stored_secp256k1.len(), 65);
-    assert_eq!(stored_secp256k1.get(0).unwrap(), 0x04);
-}
-
-/// Test that different signature types don't overwrite each other
-#[test]
-fn test_verifier_types_coexist() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _, _) = create_vault_contract(&env);
-
-    // Set both verifier types with distinct values
-    let ed25519_key = BytesN::<32>::from_array(&env, &[0xEDu8; 32]);
-    client.set_withdraw_verifier_by_admin(&0u32, &ed25519_key.clone().into());
-
-    let mut secp_bytes = [0x00u8; 65];
-    secp_bytes[0] = 0x04;
-    for i in 1..65 {
-        secp_bytes[i] = 0xEC;
-    }
-    let secp256k1_key = Bytes::from_slice(&env, &secp_bytes);
-    client.set_withdraw_verifier_by_admin(&1u32, &secp256k1_key);
-
-    // Verify they don't overwrite each other
-    let stored_ed25519 = client.get_withdraw_verifier(&0u32).unwrap();
-    assert_eq!(stored_ed25519.get(0).unwrap(), 0xED);
-    assert_eq!(stored_ed25519.len(), 32);
-
-    let stored_secp256k1 = client.get_withdraw_verifier(&1u32).unwrap();
-    assert_eq!(stored_secp256k1.get(0).unwrap(), 0x04);
-    assert_eq!(stored_secp256k1.get(1).unwrap(), 0xEC);
-    assert_eq!(stored_secp256k1.len(), 65);
-}
-
-/// Test Ed25519 ignores recovery_id parameter
-#[test]
-fn test_ed25519_ignores_recovery_id() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, vault_addr, token_addr, _, _) = create_vault_with_mocks_full(&env);
-
-    // Set Ed25519 verifier
-    let (sk, vk) = fixed_keypair();
-    let verifier_public_key = public_key_from_verifying_key(&env, &vk);
-    client.set_withdraw_verifier_by_admin(&0u32, &verifier_public_key.clone().into());
-
-    let user = Address::generate(&env);
-    let shares = 50_000_000i128;
-    let nav = 100_000_000i128;
-
-    // Test with different recovery_id values - all should work for Ed25519
-    for test_recovery_id in [0u32, 1u32, 2u32, 3u32, 99u32].iter() {
-        let request_hash = create_request_hash(&env, 100 + *test_recovery_id as u64);
-        client.withdraw_request(&user, &shares, &request_hash);
-
-        // Build and sign message
-        let msg =
-            build_withdraw_message(&env, &vault_addr, &user, shares, &token_addr, nav, &request_hash);
-        let sig = sk.sign(&bytes_to_vec(&msg));
-        let sig_bytes = BytesN::<64>::from_array(&env, &sig.to_bytes());
-
-        let actual = client.withdraw(
-            &user,
-            &shares,
-            &nav,
-            &request_hash,
-            &sig_bytes,
-            &0u32,            // Ed25519
-            test_recovery_id, // Should be ignored
-        );
-        assert!(
-            actual > 0,
-            "Ed25519 should work with recovery_id={}",
-            test_recovery_id
-        );
-    }
-}
+// Ed25519 and multi-type verifier tests removed - only Secp256k1 is now supported
 
 // ==================== Overflow Protection Tests ====================
 
@@ -3094,9 +2660,7 @@ fn test_constructor_rejects_invalid_decimals() {
     // Create withdraw currency with 8 decimals
     let withdraw_currency = create_mock_token(&env, "WBTC", "WBTC");
 
-    let mut verifier_bytes = [0u8; 32];
-    verifier_bytes[0] = 1;
-    let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
 
     // This should panic with InvalidDecimals error
     env.register(
@@ -3144,9 +2708,7 @@ fn test_constructor_rejects_invalid_withdraw_currency_decimals() {
         ),
     );
 
-    let mut verifier_bytes = [0u8; 32];
-    verifier_bytes[0] = 1;
-    let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
 
     // This should panic with InvalidDecimals error
     env.register(
@@ -3205,9 +2767,7 @@ fn test_constructor_rejects_decimals_sum_exceeds_limit() {
         ),
     );
 
-    let mut verifier_bytes = [0u8; 32];
-    verifier_bytes[0] = 1;
-    let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
 
     // This should panic with InvalidDecimals error because sum > 38
     env.register(
@@ -3279,9 +2839,7 @@ fn test_set_oracle_rejects_invalid_decimals() {
         ),
     );
 
-    let mut verifier_bytes = [0u8; 32];
-    verifier_bytes[0] = 1;
-    let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
 
     // Create vault with sum = 18 + 18 + 2 = 38 (valid)
     let vault_addr = env.register(
@@ -3345,9 +2903,7 @@ fn test_add_currency_rejects_invalid_decimals() {
         ),
     );
 
-    let mut verifier_bytes = [0u8; 32];
-    verifier_bytes[0] = 1;
-    let withdraw_verifier = BytesN::from_array(&env, &verifier_bytes);
+    let withdraw_verifier = mock_secp256k1_pubkey(&env);
 
     // Create vault with sum = 18 + 2 + 18 = 38 (valid)
     let vault_addr = env.register(
@@ -3407,48 +2963,6 @@ fn test_fee_calculation_no_overflow() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #314)")] // InvalidSignatureType
-fn test_set_withdraw_verifier_invalid_signature_type() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _, _) = create_vault_contract(&env);
-    let _ = initialize_vault_with_defaults(&env, &client);
-
-    // Try to set verifier with invalid signature type (not 0 or 1)
-    let verifier_key = Bytes::from_array(&env, &[1u8; 32]);
-    client.set_withdraw_verifier_by_admin(&999u32, &verifier_key);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #317)")] // InvalidVerifierKey
-fn test_set_withdraw_verifier_ed25519_wrong_length() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _, _) = create_vault_contract(&env);
-    let _ = initialize_vault_with_defaults(&env, &client);
-
-    // Ed25519 key with wrong length (should be 32 bytes, not 31)
-    let verifier_key = Bytes::from_array(&env, &[1u8; 31]);
-    client.set_withdraw_verifier_by_admin(&0u32, &verifier_key);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #317)")] // InvalidVerifierKey
-fn test_set_withdraw_verifier_secp256k1_wrong_length() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (client, _, _) = create_vault_contract(&env);
-    let _ = initialize_vault_with_defaults(&env, &client);
-
-    // Secp256k1 key with wrong length (should be 65 bytes, not 64)
-    let verifier_key = Bytes::from_array(&env, &[4u8; 64]);
-    client.set_withdraw_verifier_by_admin(&1u32, &verifier_key);
-}
-
-#[test]
 #[should_panic(expected = "Error(Contract, #317)")] // InvalidVerifierKey
 fn test_set_withdraw_verifier_secp256k1_wrong_prefix() {
     let env = Env::default();
@@ -3460,22 +2974,17 @@ fn test_set_withdraw_verifier_secp256k1_wrong_prefix() {
     // Secp256k1 key with wrong prefix (should be 0x04, not 0x03)
     let mut verifier_key_bytes = [0u8; 65];
     verifier_key_bytes[0] = 0x03; // Wrong prefix for uncompressed key
-    let verifier_key = Bytes::from_array(&env, &verifier_key_bytes);
-    client.set_withdraw_verifier_by_admin(&1u32, &verifier_key);
+    let verifier_key = BytesN::<65>::from_array(&env, &verifier_key_bytes);
+    client.set_withdraw_verifier_by_admin(&verifier_key);
 }
 
 #[test]
-fn test_set_withdraw_verifier_valid_keys() {
+fn test_set_withdraw_verifier_valid_key() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (client, _, _) = create_vault_contract(&env);
     let _ = initialize_vault_with_defaults(&env, &client);
-
-    // Test valid Ed25519 key (32 bytes)
-    let ed25519_key = Bytes::from_array(&env, &[2u8; 32]);
-    client.set_withdraw_verifier_by_admin(&0u32, &ed25519_key);
-    assert_eq!(client.get_withdraw_verifier(&0u32), Some(ed25519_key));
 
     // Test valid Secp256k1 key (65 bytes with 0x04 prefix)
     let mut secp256k1_key_bytes = [0u8; 65];
@@ -3483,7 +2992,7 @@ fn test_set_withdraw_verifier_valid_keys() {
     for i in 1..65 {
         secp256k1_key_bytes[i] = (i % 256) as u8;
     }
-    let secp256k1_key = Bytes::from_array(&env, &secp256k1_key_bytes);
-    client.set_withdraw_verifier_by_admin(&1u32, &secp256k1_key);
-    assert_eq!(client.get_withdraw_verifier(&1u32), Some(secp256k1_key));
+    let secp256k1_key = BytesN::<65>::from_array(&env, &secp256k1_key_bytes);
+    client.set_withdraw_verifier_by_admin(&secp256k1_key);
+    assert_eq!(client.get_withdraw_verifier(), Some(secp256k1_key));
 }

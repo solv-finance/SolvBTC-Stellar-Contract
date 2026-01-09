@@ -24,28 +24,10 @@ const FEE_PRECISION: i128 = 10000;
 /// StrKey address length for Soroban addresses.
 const ADDRESS_STRKEY_LENGTH: usize = 56;
 
+/// Ethereum personal_sign V offset.
+const ETHEREUM_V_OFFSET: u8 = 27;
+
 // ==================== Data Structures ====================
-
-/// Signature type enum for better readability and type safety
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum SignatureType {
-    Ed25519 = 0,
-    Secp256k1 = 1,
-}
-
-impl SignatureType {
-    pub fn to_u32(self) -> u32 {
-        self as u32
-    }
-    pub fn from_u32(value: u32) -> Option<Self> {
-        match value {
-            0 => Some(SignatureType::Ed25519),
-            1 => Some(SignatureType::Secp256k1),
-            _ => None,
-        }
-    }
-}
 
 /// Storage data key enum
 #[derive(Clone)]
@@ -55,10 +37,8 @@ pub enum DataKey {
     Oracle,
     /// Treasurer address
     Treasurer,
-    /// Withdrawal verifier map: u32 (signature_type) -> PublicKey (Bytes)
-    /// SignatureType::ED25519 (32 bytes)
-    /// SignatureType::SECP256K1 (65 bytes uncompressed)
-    WithdrawVerifier(u32),
+    /// Withdrawal verifier: Secp256k1 uncompressed public key (65 bytes)
+    WithdrawVerifier,
     /// Token contract address
     TokenContract,
     /// Supported currencies mapping (Map<Address, bool>)
@@ -115,7 +95,7 @@ pub enum VaultError {
     /// Insufficient permissions
     Unauthorized = 313,
     /// Invalid signature type
-    InvalidSignatureType = 314,
+    //InvalidSignatureType = 314, // removed with Ed25519 support
     /// Withdraw verifier not set
     WithdrawVerifierNotSet = 315,
     /// Invalid decimals configuration
@@ -147,7 +127,7 @@ impl SolvBTCVault {
         token_contract: Address,
         oracle: Address,
         treasurer: Address,
-        withdraw_verifier: BytesN<32>,
+        withdraw_verifier: BytesN<65>,
         withdraw_fee_ratio: i128,
         withdraw_fee_receiver: Address,
         withdraw_currency: Address,
@@ -172,11 +152,14 @@ impl SolvBTCVault {
         env.storage()
             .instance()
             .set(&DataKey::Treasurer, &treasurer);
-        // Set Ed25519 verifier as default
-        env.storage().instance().set(
-            &DataKey::WithdrawVerifier(SignatureType::Ed25519.to_u32()),
-            &withdraw_verifier,
-        );
+        // Set Secp256k1 verifier (uncompressed 65-byte public key).
+        let verifier_bytes = withdraw_verifier.to_array();
+        if verifier_bytes[0] != 0x04 {
+            panic_with_error!(env, VaultError::InvalidVerifierKey);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawVerifier, &withdraw_verifier);
         env.storage()
             .instance()
             .set(&DataKey::WithdrawFeeRatio, &withdraw_fee_ratio);
@@ -297,9 +280,7 @@ impl VaultOperations for SolvBTCVault {
         shares: i128,
         nav: i128,
         request_hash: Bytes,
-        signature: BytesN<64>,
-        signature_type: u32, // 0 = Ed25519, 1 = Secp256k1
-        recovery_id: u32,
+        signature: BytesN<65>,
     ) -> i128 {
         from.require_auth(); // Verify caller identity
 
@@ -345,50 +326,17 @@ impl VaultOperations for SolvBTCVault {
             &request_hash,
         );
 
-        // Convert u32 to SignatureType enum
-        let sig_type = SignatureType::from_u32(signature_type)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidSignatureType));
+        // Get Secp256k1 verifier public key
+        let verifier_public_key: BytesN<65> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WithdrawVerifier)
+            .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawVerifierNotSet));
 
-        // Verify signature based on type
-        match sig_type {
-            // Verify Ed25519 signature
-            SignatureType::Ed25519 => {
-                // Get Ed25519 verifier public key from Map
-                let verifier_public_key: BytesN<32> = env
-                    .storage()
-                    .instance()
-                    .get(&DataKey::WithdrawVerifier(SignatureType::Ed25519.to_u32()))
-                    .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawVerifierNotSet));
-
-                // Verify signature with raw string message
-                env.crypto()
-                    .ed25519_verify(&verifier_public_key, &withdraw_message, &signature);
-            }
-
-            // Verify Secp256k1 signature
-            SignatureType::Secp256k1 => {
-                // Get Secp256k1 verifier public key from Map
-                let verifier_public_key: BytesN<65> = env
-                    .storage()
-                    .instance()
-                    .get(&DataKey::WithdrawVerifier(
-                        SignatureType::Secp256k1.to_u32(),
-                    ))
-                    .unwrap_or_else(|| panic_with_error!(env, VaultError::WithdrawVerifierNotSet));
-
-                // Calculate EIP191 digest
-                let digest = Self::personal_sign_hash(&env, &withdraw_message);
-
-                // Recover public key and compare with stored 65-byte uncompressed key
-                let recovered = env
-                    .crypto()
-                    .secp256k1_recover(&digest, &signature, recovery_id);
-
-                // Compare recovered public key with stored 65-byte uncompressed key
-                if recovered != verifier_public_key {
-                    panic_with_error!(env, VaultError::Unauthorized);
-                }
-            }
+        // Recover public key from signature and compare with stored verifier
+        let recovered = Self::verify_secp256k1_personal_sign_recover(&env, &signature, &withdraw_message);
+        if recovered != verifier_public_key {
+            panic_with_error!(env, VaultError::Unauthorized);
         }
 
         // Get fee ratio
@@ -601,41 +549,22 @@ impl CurrencyManagement for SolvBTCVault {
 #[contractimpl]
 impl SystemManagement for SolvBTCVault {
     #[only_owner]
-    fn set_withdraw_verifier_by_admin(env: Env, signature_type: u32, verifier_public_key: Bytes) {
-        // Validate signature type and key length
-        let sig_type = SignatureType::from_u32(signature_type)
-            .unwrap_or_else(|| panic_with_error!(env, VaultError::InvalidSignatureType));
-
-        match sig_type {
-            SignatureType::Ed25519 => {
-                // Ed25519 public key must be exactly 32 bytes
-                if verifier_public_key.len() != 32 {
-                    panic_with_error!(env, VaultError::InvalidVerifierKey);
-                }
-            }
-            SignatureType::Secp256k1 => {
-                // Secp256k1 uncompressed public key must be exactly 65 bytes
-                if verifier_public_key.len() != 65 {
-                    panic_with_error!(env, VaultError::InvalidVerifierKey);
-                }
-                // Validate uncompressed format: first byte should be 0x04
-                if verifier_public_key.get(0).unwrap_or(0) != 0x04 {
-                    panic_with_error!(env, VaultError::InvalidVerifierKey);
-                }
-            }
+    fn set_withdraw_verifier_by_admin(env: Env, verifier_public_key: BytesN<65>) {
+        // Validate Secp256k1 uncompressed public key format: first byte should be 0x04
+        let verifier_bytes = verifier_public_key.to_array();
+        if verifier_bytes[0] != 0x04 {
+            panic_with_error!(env, VaultError::InvalidVerifierKey);
         }
 
-        // Store verifier public key based on signature type
-        env.storage().instance().set(
-            &DataKey::WithdrawVerifier(signature_type),
-            &verifier_public_key,
-        );
+        // Store verifier public key
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawVerifier, &verifier_public_key);
 
         // Publish event
         env.events().publish(
             (
                 Symbol::new(&env, "set_withdraw_verifier"),
-                signature_type,
                 verifier_public_key.clone(),
             ),
             Self::get_admin_internal(&env),
@@ -733,10 +662,8 @@ impl VaultQuery for SolvBTCVault {
         Self::get_admin_internal(&env)
     }
 
-    fn get_withdraw_verifier(env: Env, signature_type: u32) -> Option<Bytes> {
-        env.storage()
-            .instance()
-            .get(&DataKey::WithdrawVerifier(signature_type))
+    fn get_withdraw_verifier(env: Env) -> Option<BytesN<65>> {
+        env.storage().instance().get(&DataKey::WithdrawVerifier)
     }
 
     fn get_oracle(env: Env) -> Address {
@@ -853,6 +780,33 @@ impl SolvBTCVault {
         eth_msg.append(message);
 
         env.crypto().keccak256(&eth_msg)
+    }
+
+    /// Recover public key from personal_sign signature
+    fn verify_secp256k1_personal_sign_recover(
+        env: &Env,
+        signature: &BytesN<65>,
+        message: &Bytes,
+    ) -> BytesN<65> {
+        let msg_hash = Self::personal_sign_hash(env, message);
+
+        let sig_array = signature.to_array();
+        let mut rs_array = [0u8; 64];
+        rs_array.copy_from_slice(&sig_array[0..64]);
+        let rs_bytes = BytesN::from_array(env, &rs_array);
+
+        let v_byte = sig_array[64];
+        let recovery_id = if v_byte >= ETHEREUM_V_OFFSET {
+            (v_byte - ETHEREUM_V_OFFSET) as u32
+        } else {
+            v_byte as u32
+        };
+
+        if recovery_id > 1 {
+            panic_with_error!(env, VaultError::Unauthorized);
+        }
+
+        env.crypto().secp256k1_recover(&msg_hash, &rs_bytes, recovery_id)
     }
 
     fn address_to_bytes(env: &Env, s: &Address) -> Bytes {
